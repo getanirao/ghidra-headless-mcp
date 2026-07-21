@@ -99,6 +99,55 @@ async def serve():
                     "required": ["function_name"],
                 },
             ),
+            types.Tool(
+                name="rename_symbol",
+                description="Rename a symbol (function or label) at a given address",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "address": {
+                            "type": "string",
+                            "description": "Address of the symbol (e.g. '0x401000')",
+                        },
+                        "new_name": {
+                            "type": "string",
+                            "description": "New name for the symbol",
+                        },
+                    },
+                    "required": ["address", "new_name"],
+                },
+            ),
+            types.Tool(
+                name="add_comment",
+                description="Add a comment to a code unit at a given address",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "address": {
+                            "type": "string",
+                            "description": "Address to comment on (e.g. '0x401000')",
+                        },
+                        "text": {
+                            "type": "string",
+                            "description": "Comment text",
+                        },
+                        "comment_type": {
+                            "type": "string",
+                            "description": "Comment type: plate, pre, post, eol, or repeatable (default: plate)",
+                            "default": "plate",
+                        },
+                    },
+                    "required": ["address", "text"],
+                },
+            ),
+            types.Tool(
+                name="analyze_and_decompile_entrypoints",
+                description="Composite: bulk decompile all entry points (entry, main, exports) in one call",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -125,6 +174,19 @@ async def serve():
                     function_name=arguments["function_name"],
                     max_depth=arguments.get("max_depth", 3),
                 )
+            elif name == "rename_symbol":
+                result = session.rename_symbol(
+                    address=arguments["address"],
+                    new_name=arguments["new_name"],
+                )
+            elif name == "add_comment":
+                result = session.add_comment(
+                    address=arguments["address"],
+                    text=arguments["text"],
+                    comment_type=arguments.get("comment_type", "plate"),
+                )
+            elif name == "analyze_and_decompile_entrypoints":
+                result = session.analyze_and_decompile_entrypoints()
             else:
                 raise ValueError(f"Unknown tool: {name}")
 

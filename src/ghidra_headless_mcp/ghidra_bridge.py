@@ -5,8 +5,8 @@ from typing import Optional
 
 import pyhidra
 
-from ghidra.program.model.listing import FunctionManager
-from ghidra.program.model.symbol import ReferenceManager
+from ghidra.program.model.listing import FunctionManager, CodeUnit
+from ghidra.program.model.symbol import ReferenceManager, SourceType
 from ghidra.app.decompiler import DecompInterface
 from ghidra.util.task import ConsoleTaskMonitor
 
@@ -155,6 +155,109 @@ class GhidraSession:
             "references_to": to_list,
             "references_from": from_list,
         }
+
+    def rename_symbol(self, address: str, new_name: str) -> dict:
+        self._require_session()
+        program = self._current_program
+        addr = program.getAddressFactory().getAddress(address)
+        if addr is None:
+            raise ValueError(f"Invalid address: {address}")
+
+        fm = program.getFunctionManager()
+        func = fm.getFunctionAt(addr)
+        if func is not None:
+            old_name = func.getName()
+            func.setName(new_name, SourceType.USER_DEFINED)
+            return {"address": address, "old_name": old_name, "new_name": new_name, "type": "function"}
+
+        symbol_table = program.getSymbolTable()
+        symbols = list(symbol_table.getSymbols(addr))
+        if not symbols:
+            raise ValueError(f"No symbol found at address {address}")
+
+        sym = symbols[0]
+        old_name = sym.getName()
+        sym.setName(new_name, SourceType.USER_DEFINED)
+        return {"address": address, "old_name": old_name, "new_name": new_name, "type": str(sym.getSymbolType())}
+
+    def add_comment(self, address: str, text: str, comment_type: str = "plate") -> dict:
+        self._require_session()
+        program = self._current_program
+        addr = program.getAddressFactory().getAddress(address)
+        if addr is None:
+            raise ValueError(f"Invalid address: {address}")
+
+        type_map = {
+            "plate": CodeUnit.PLATE_COMMENT,
+            "pre": CodeUnit.PRE_COMMENT,
+            "post": CodeUnit.POST_COMMENT,
+            "eol": CodeUnit.EOL_COMMENT,
+            "repeatable": CodeUnit.REPEATABLE_COMMENT,
+        }
+        ghidra_type = type_map.get(comment_type.lower())
+        if ghidra_type is None:
+            valid = ", ".join(type_map.keys())
+            raise ValueError(f"Invalid comment_type '{comment_type}'. Valid: {valid}")
+
+        listing = program.getListing()
+        cu = listing.getCodeUnitAt(addr)
+        if cu is None:
+            raise ValueError(f"No code unit at address {address}")
+
+        existing = cu.getComment(ghidra_type)
+        cu.setComment(ghidra_type, text)
+
+        return {
+            "address": address,
+            "comment_type": comment_type,
+            "length": len(text),
+            "replaced_existing": existing is not None,
+        }
+
+    def analyze_and_decompile_entrypoints(self) -> list[dict]:
+        self._require_session()
+        program = self._current_program
+        fm = program.getFunctionManager()
+        listing = program.getListing()
+
+        targets = set()
+        entry = program.getExecutableEntrySet()
+        for entry_addr in entry:
+            targets.add(entry_addr)
+
+        for func in fm.getFunctions(True):
+            name = func.getName()
+            if name in ("entry", "_start", "main", "WinMain", "DllMain", "DriverEntry"):
+                targets.add(func.getEntryPoint())
+
+        exports = program.getSymbolTable().getSymbolIterator()
+        for sym in exports:
+            if sym.getSymbolType().toString() == "Function":
+                targets.add(sym.getAddress())
+
+        decompiler = DecompInterface()
+        decompiler.openProgram(program)
+        monitor = ConsoleTaskMonitor()
+        results = []
+
+        seen = set()
+        for addr in targets:
+            key = str(addr)
+            if key in seen:
+                continue
+            seen.add(key)
+            func = fm.getFunctionAt(addr)
+            if func is None:
+                continue
+            result = decompiler.decompileFunction(func, 0, monitor)
+            results.append({
+                "name": func.getName(),
+                "address": key,
+                "signature": func.getSignature(),
+                "decompiled": result.getDecompiledFunction().getC() if (result and result.decompileCompleted()) else None,
+            })
+
+        return results
 
     def get_call_graph(self, function_name: str, max_depth: int = 3) -> dict:
         self._require_session()
