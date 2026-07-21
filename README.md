@@ -115,6 +115,23 @@ docker run -i --rm \
 
 The `Dockerfile` bundles Ghidra 11.2 and JDK 17 in a slim Python 3.11 image. Bind-mount your binaries directory at runtime.
 
+### P-code micro-emulation
+
+| Tool | Description |
+|---|---|
+| `emulate_slice` | Headlessly execute N instructions from an address using Ghidra's `EmulatorHelper`. Seed register state (e.g. `{"r0": 5, "r1": 0x41424344}`) and get a step-by-step trace of register mutations. Works on any Ghidra-supported architecture (ARM, x86, MIPS, etc.) — no GDB/LLDB, no network ports, no debugger stubs. |
+
+**Example — trace ARM register propagation:**
+
+```python
+emulate_slice(
+    start_address="0x1000",
+    instruction_count=5,
+    initial_registers={"r0": 0xDEADBEEF, "r1": 0, "pc": 0x1000},
+)
+# Returns step array with register snapshots after each instruction
+```
+
 ### Function fingerprinting / signature transfer
 
 | Tool | Description |

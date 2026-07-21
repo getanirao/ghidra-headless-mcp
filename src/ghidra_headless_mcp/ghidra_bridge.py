@@ -608,6 +608,32 @@ class GhidraSession:
             "common_count": len(common),
         }
 
+    # ── P-code micro-emulation ─────────────────────────────────────────
+
+    def emulate_slice(
+        self,
+        start_address: str,
+        instruction_count: int = 10,
+        initial_registers: Optional[dict[str, int]] = None,
+        track_registers: Optional[list[str]] = None,
+        session_id: Optional[str] = None,
+    ) -> dict:
+        from .tools.emulation import emulate_instruction_slice
+
+        info = self._require_session(session_id)
+        program = info.program
+        addr = program.getAddressFactory().getAddress(start_address)
+        if addr is None:
+            raise ValueError(f"Invalid address: {start_address}")
+
+        return emulate_instruction_slice(
+            program=program,
+            start_address=addr,
+            instruction_count=instruction_count,
+            initial_registers=initial_registers or {},
+            track_registers=track_registers,
+        )
+
     # ── Function fingerprinting / signature transfer ──────────────────
 
     def calculate_function_fingerprint(

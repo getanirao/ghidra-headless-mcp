@@ -215,6 +215,30 @@ TOOLS = [
             "required": ["session_a", "session_b"],
         },
     ),
+    # ── P-code micro-emulation ──────────────────────────────────────
+    types.Tool(
+        name="emulate_slice",
+        description="Headlessly execute a slice of instructions using Ghidra's P-code emulator. Seed registers and track value propagation across steps — no debugger or network needed.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "start_address": {"type": "string", "description": "Starting address (e.g. 0x1000)"},
+                "instruction_count": {"type": "integer", "default": 10, "description": "Number of instructions to step"},
+                "initial_registers": {
+                    "type": "object",
+                    "description": "Register seed values as JSON object, e.g. {\"r0\": 5, \"r1\": 1095216660}",
+                    "additionalProperties": {"type": "integer"},
+                },
+                "track_registers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Subset of registers to log (default: all seeded + PC)",
+                },
+                "session_id": {"type": "string"},
+            },
+            "required": ["start_address"],
+        },
+    ),
     # ── Function fingerprinting / signature transfer ────────────────
     types.Tool(
         name="calculate_function_fingerprint",
@@ -363,6 +387,16 @@ def _dispatch(name: str, args: dict):
         return session.diff_binaries(
             session_a=args["session_a"],
             session_b=args["session_b"],
+        )
+
+    # Emulation
+    if name == "emulate_slice":
+        return session.emulate_slice(
+            start_address=args["start_address"],
+            instruction_count=args.get("instruction_count", 10),
+            initial_registers=args.get("initial_registers"),
+            track_registers=args.get("track_registers"),
+            session_id=sid,
         )
 
     # Function fingerprinting / signature transfer
