@@ -1,6 +1,6 @@
 # Ghidra Retro MCP
 
-MCP (Model Context Protocol) server that exposes Ghidra's headless analysis capabilities to AI assistants via [pyhidra](https://github.com/dod-cyber-crime-institute/pyhidra).
+MCP (Model Context Protocol) server that exposes Ghidra's headless analysis capabilities to AI assistants via pyhidra.
 
 > **GBA ROMs**: If analyzing Game Boy Advance ROMs, install [pudii/gba-ghidra-loader](https://github.com/pudii/gba-ghidra-loader) in your Ghidra installation for proper ROM header parsing, mirrored memory regions, and I/O register maps. The loader repository has pre-built `.gpa` files for Ghidra 11.x.
 
