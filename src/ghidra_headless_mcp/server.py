@@ -202,6 +202,34 @@ TOOLS = [
             "required": ["address"],
         },
     ),
+    # ── Byte search / listing ───────────────────────────────────────
+    types.Tool(
+        name="search_bytes",
+        description="Search for a hex byte pattern across the entire binary (e.g. '09 08 00 01' or 'F86D0003'). Returns matching addresses with context bytes.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Hex pattern (e.g. '09 08 00 01' or 'F86D0003')"},
+                "max_results": {"type": "integer", "default": 50},
+                "session_id": {"type": "string"},
+            },
+            "required": ["pattern"],
+        },
+    ),
+    types.Tool(
+        name="get_listing_range",
+        description="Return raw hex + ASCII dump for a byte range, equivalent to Ghidra's Listing view.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "start_address": {"type": "string", "description": "Start address"},
+                "byte_count": {"type": "integer", "default": 64, "description": "Total bytes to dump"},
+                "columns": {"type": "integer", "default": 16, "description": "Bytes per row"},
+                "session_id": {"type": "string"},
+            },
+            "required": ["start_address"],
+        },
+    ),
     # ── Binary diffing ──────────────────────────────────────────────
     types.Tool(
         name="diff_binaries",
@@ -379,6 +407,21 @@ def _dispatch(name: str, args: dict):
         return session.disassemble_range(
             address=args["address"],
             instruction_count=args.get("instruction_count", 10),
+            session_id=sid,
+        )
+
+    # Byte search / listing
+    if name == "search_bytes":
+        return session.search_bytes(
+            pattern=args["pattern"],
+            max_results=args.get("max_results", 50),
+            session_id=sid,
+        )
+    if name == "get_listing_range":
+        return session.get_listing_range(
+            start_address=args["start_address"],
+            byte_count=args.get("byte_count", 64),
+            columns=args.get("columns", 16),
             session_id=sid,
         )
 

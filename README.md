@@ -2,6 +2,8 @@
 
 MCP (Model Context Protocol) server that exposes Ghidra's headless analysis capabilities to AI assistants via [pyhidra](https://github.com/dod-cyber-crime-institute/pyhidra).
 
+> **GBA ROMs**: If analyzing Game Boy Advance ROMs, install [pudii/gba-ghidra-loader](https://github.com/pudii/gba-ghidra-loader) in your Ghidra installation for proper ROM header parsing, mirrored memory regions, and I/O register maps. The loader repository has pre-built `.gpa` files for Ghidra 11.x.
+
 ## Security Model
 
 This server communicates **exclusively over standard process stdio** — there is no HTTP socket, no TCP listener, and no network interface exposed. It is inherently immune to LAN/WAN exposure, SSRF, and unauthenticated API attacks. The only way to interact with it is for an MCP client to launch it as a subprocess and communicate via stdin/stdout.
@@ -76,6 +78,13 @@ Most tools accept an optional `session_id` parameter — omit it to use the most
 | Tool | Description |
 |---|---|
 | `disassemble_range` | Disassemble N raw instructions at an address — returns mnemonic, operands, hex bytes, and length for precise lower-level inspection. |
+| `get_listing_range` | Raw hex + ASCII dump for a byte range, equivalent to Ghidra's Listing panel. Complements `disassemble_range` for data regions. |
+
+### Byte-sequence search
+
+| Tool | Description |
+|---|---|
+| `search_bytes` | Search the entire binary for a hex byte pattern (e.g. `09 08 00 01` or `F86D0003`). Returns matching addresses with context bytes and any string label at the hit. |
 
 ### Binary diffing
 

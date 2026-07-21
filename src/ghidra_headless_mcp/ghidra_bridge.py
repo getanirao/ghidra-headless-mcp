@@ -563,6 +563,74 @@ class GhidraSession:
 
         return instructions
 
+    def search_bytes(
+        self, pattern: str, max_results: int = 50, session_id: Optional[str] = None
+    ) -> list[dict]:
+        info = self._require_session(session_id)
+        program = info.program
+        memory = program.getMemory()
+
+        hex_str = pattern.replace(" ", "").replace("0x", "").replace("x", "")
+        if not hex_str or len(hex_str) % 2 != 0:
+            raise ValueError(f"Invalid hex pattern: '{pattern}'")
+        raw_bytes = bytes.fromhex(hex_str)
+
+        min_addr = program.getMinAddress()
+        max_addr = program.getMaxAddress()
+
+        from ghidra.util.task import ConsoleTaskMonitor as _CM
+        results = []
+        current = min_addr
+        hits = 0
+        while hits < max_results:
+            found = memory.findBytes(current, max_addr, raw_bytes, None, True, _CM())
+            if found is None:
+                break
+            data_at = program.getListing().getDefinedDataAt(found)
+            label = ""
+            if data_at is not None and data_at.isString():
+                label = data_at.getDefaultValueRepresentation()
+            results.append({
+                "address": str(found),
+                "context": _get_bytes(program, found, raw_bytes.length),
+                "label": label[:80] if label else "",
+            })
+            hits += 1
+            current = found.add(1)
+        return results
+
+    def get_listing_range(
+        self,
+        start_address: str,
+        byte_count: int = 64,
+        columns: int = 16,
+        session_id: Optional[str] = None,
+    ) -> list[dict]:
+        info = self._require_session(session_id)
+        program = info.program
+        addr = program.getAddressFactory().getAddress(start_address)
+        if addr is None:
+            raise ValueError(f"Invalid address: {start_address}")
+
+        rows = []
+        offset = 0
+        while offset < byte_count:
+            row_addr = addr.add(offset)
+            chunk_len = min(columns, byte_count - offset)
+            raw = _get_bytes(program, row_addr, chunk_len)
+            hex_part = raw
+            ascii_part = "".join(
+                chr(b) if 0x20 <= b <= 0x7E else "."
+                for b in _read_raw_bytes(program, row_addr, chunk_len)
+            )
+            rows.append({
+                "address": str(row_addr),
+                "hex": hex_part,
+                "ascii": ascii_part,
+            })
+            offset += chunk_len
+        return rows
+
     # ── Binary diffing ─────────────────────────────────────────────────
 
     def diff_binaries(
@@ -768,6 +836,14 @@ def _get_bytes(program, addr, length):
         return " ".join(f"{b & 0xFF:02x}" for b in bb)
     except Exception:
         return ""
+
+
+def _read_raw_bytes(program, addr, length):
+    try:
+        mem = program.getMemory()
+        return list(mem.getBytes(addr, length))
+    except Exception:
+        return []
 
 
 def _resolve_calls(func, program, depth: int) -> dict:
