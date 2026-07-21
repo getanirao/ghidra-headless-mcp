@@ -1,5 +1,5 @@
 [project]
-name = "ghidra-headless-mcp"
+name = "ghidra-retro-mcp"
 version = "0.1.0"
 description = "MCP server for Ghidra headless analysis via pyhidra"
 license = "Apache-2.0"
@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ghidra-mcp = "ghidra_headless_mcp.server:main"
+ghidra-retro-mcp = "ghidra_retro_mcp.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -79,7 +79,7 @@ def build_workspace_report(program) -> str:
 
     # ── Assemble report ──────────────────────────────────────────────
     lines = [
-        "# Ghidra Headless MCP — Workspace Report",
+        "# Ghidra Retro MCP — Workspace Report",
         "",
         f"**Program:** `{program.getName()}`",
         f"**Architecture:** `{program.getLanguage().getLanguageID()}`",

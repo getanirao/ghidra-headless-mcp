@@ -1,4 +1,4 @@
-# Ghidra Headless MCP
+# Ghidra Retro MCP
 
 MCP (Model Context Protocol) server that exposes Ghidra's headless analysis capabilities to AI assistants via [pyhidra](https://github.com/dod-cyber-crime-institute/pyhidra).
 
@@ -15,14 +15,14 @@ This server communicates **exclusively over standard process stdio** — there i
 ```bash
 pip install -e .
 set GHIDRA_INSTALL_DIR=C:\path\to\ghidra   # Windows
-ghidra-mcp
+ghidra-retro-mcp
 ```
 
 ### Docker
 
 ```bash
-docker build -t ghidra-headless-mcp .
-docker run -i --rm -v /path/to/binaries:/data ghidra-headless-mcp
+docker build -t ghidra-retro-mcp .
+docker run -i --rm -v /path/to/binaries:/data ghidra-retro-mcp
 ```
 
 The container bundles JDK 17, Ghidra 11.2, and the server — no host dependencies beyond Docker.
@@ -33,7 +33,7 @@ The container bundles JDK 17, Ghidra 11.2, and the server — no host dependenci
 {
   "mcpServers": {
     "ghidra-headless": {
-      "command": "ghidra-mcp",
+      "command": "ghidra-retro-mcp",
       "args": ["--ghidra-dir", "C:\\path\\to\\ghidra"],
       "env": {}
     }
@@ -114,12 +114,12 @@ diff_binaries(session_a=s1.session_id, session_b="my_session")
 ### Docker (multi-user / CI)
 
 ```bash
-docker build -t ghidra-headless-mcp .
+docker build -t ghidra-retro-mcp .
 
 # Run as an MCP subprocess
 docker run -i --rm \
   -v /data/binaries:/data \
-  ghidra-headless-mcp \
+  ghidra-retro-mcp \
   --ghidra-dir /opt/ghidra
 ```
 
@@ -147,7 +147,7 @@ All run inside the pyhidra process via Ghidra's `EmulatorHelper` — no GDB/LLDB
 
 | Tool | Description |
 |---|---|
-| `save_active_binary_signature` | Fingerprint all functions and stash the map under a `lineage_group_id` (e.g. `"my_firmware_v1"`). Stored in `~/.ghidra_headless_mcp/signatures/` — no JSON files to manage. |
+| `save_active_binary_signature` | Fingerprint all functions and stash the map under a `lineage_group_id` (e.g. `"my_firmware_v1"`). Stored in `~/.ghidra_retro_mcp/signatures/` — no JSON files to manage. |
 | `auto_restore_signatures_from_stash` | Load a stashed map by `lineage_group_id` and auto-rename every matching function. |
 | `auto_stash_current_binary` | **Zero-input auto-stash** — hashes the binary's first 4 KB, saves a map under that hash. Just analyze and call. |
 | `auto_restore_current_binary` | **Zero-input auto-restore** — hashes the binary, looks up a previous stash, renames matches. No group ID needed. |
@@ -168,7 +168,7 @@ auto_restore_current_binary(session_id=s2.session_id)
 
 ## Hardware & Retro Ecosystem Integration (Nintendo Suites)
 
-`ghidra-headless-mcp` includes native out-of-the-box support for retro-reversing automation pipelines. The server container bundles pre-compiled execution dependencies for:
+`ghidra-retro-mcp` includes native out-of-the-box support for retro-reversing automation pipelines. The server container bundles pre-compiled execution dependencies for:
 
 - **Nintendo Entertainment System (NES)** via `GhidraNes`
 - **Super Nintendo Entertainment System (SNES)** via native 65816 memory maps
@@ -193,11 +193,11 @@ Instead of forcing your AI agent to spend cycles manually identifying architectu
 ## Project Structure
 
 ```
-ghidra-headless-mcp/
+ghidra-retro-mcp/
 ├── Dockerfile
 ├── pyproject.toml
 ├── README.md
-└── src/ghidra_headless_mcp/
+└── src/ghidra_retro_mcp/
     ├── __init__.py
     ├── server.py          # MCP server, tool registry, stdio transport
     ├── ghidra_bridge.py   # GhidraSession — pyhidra wrapper, all tool logic

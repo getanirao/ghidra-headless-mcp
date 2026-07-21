@@ -40,4 +40,4 @@ COPY src/ ./src/
 RUN pip install --no-cache-dir -e .
 
 EXPOSE 0
-ENTRYPOINT ["ghidra-mcp"]
+ENTRYPOINT ["ghidra-retro-mcp"]

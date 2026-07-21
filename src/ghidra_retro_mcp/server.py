@@ -393,7 +393,7 @@ TOOLS = [
     ),
     types.Tool(
         name="list_stashed_signature_groups",
-        description="List all stashed signature groups currently in the local server cache (~/.ghidra_headless_mcp/signatures/).",
+        description="List all stashed signature groups currently in the local server cache (~/.ghidra_retro_mcp/signatures/).",
         inputSchema={"type": "object", "properties": {}},
     ),
     # ── Nintendo ROM triage ─────────────────────────────────────────────
@@ -414,7 +414,7 @@ TOOLS = [
 
 
 async def serve():
-    server = Server("ghidra-headless-mcp")
+    server = Server("ghidra-retro-mcp")
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
@@ -434,7 +434,7 @@ async def serve():
             read_stream,
             write_stream,
             InitializationOptions(
-                server_name="ghidra-headless-mcp",
+                server_name="ghidra-retro-mcp",
                 server_version="0.1.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
@@ -612,7 +612,7 @@ def main():
         stream=sys.stderr,
     )
 
-    parser = argparse.ArgumentParser(description="Ghidra Headless MCP Server")
+    parser = argparse.ArgumentParser(description="Ghidra Retro MCP Server")
     parser.add_argument(
         "--ghidra-dir",
         default=os.environ.get("GHIDRA_INSTALL_DIR"),
