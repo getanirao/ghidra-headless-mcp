@@ -115,6 +115,30 @@ docker run -i --rm \
 
 The `Dockerfile` bundles Ghidra 11.2 and JDK 17 in a slim Python 3.11 image. Bind-mount your binaries directory at runtime.
 
+### Function fingerprinting / signature transfer
+
+| Tool | Description |
+|---|---|
+| `calculate_function_fingerprint` | Generate a structural hash for a function (vars, params, body size, branches, called funcs, embedded strings, numeric constants). Survives compiler reordering. |
+| `export_signature_map` | Build a complete `{hash → name}` map for every function in the current binary. Save this JSON to reuse across versions. |
+| `apply_signature_map` | Pass a previously exported signature map; the server sweeps the binary and renames every matching function automatically. |
+
+**Typical workflow — patch diff across versions:**
+
+```python
+# 1. Analyze old binary and export its signature map
+s1 = analyze_binary(binary_path="/bin/v1.bin")
+old_map = export_signature_map(session_id=s1.session_id)
+
+# 2. Analyze new binary and apply the map
+s2 = analyze_binary(binary_path="/bin/v2.bin")
+result = apply_signature_map(
+    signature_json_map=old_map["signature_map"],
+    session_id=s2.session_id,
+)
+# result.matched = 142  — 142 functions renamed automatically
+```
+
 ## Project Structure
 
 ```

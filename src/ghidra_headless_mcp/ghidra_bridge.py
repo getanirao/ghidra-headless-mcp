@@ -608,6 +608,45 @@ class GhidraSession:
             "common_count": len(common),
         }
 
+    # ── Function fingerprinting / signature transfer ──────────────────
+
+    def calculate_function_fingerprint(
+        self, func_name: str, session_id: Optional[str] = None
+    ) -> dict:
+        from .tools.signatures import fingerprint_function
+
+        info = self._require_session(session_id)
+        listing = info.program.getListing()
+        func = _find_function(listing, func_name)
+        if func is None:
+            raise ValueError(f"Function '{func_name}' not found")
+        return fingerprint_function(func, info.program)
+
+    def export_signature_map(
+        self, session_id: Optional[str] = None
+    ) -> dict:
+        from .tools.signatures import export_signature_map as _export
+
+        info = self._require_session(session_id)
+        return {
+            "session_id": session_id or self._active_session_id,
+            "binary_path": info.binary_path,
+            "function_count": len(list(info.program.getFunctionManager().getFunctions(True))),
+            "signature_map": _export(info.program),
+        }
+
+    def apply_signature_map(
+        self, signature_json_map: dict, session_id: Optional[str] = None
+    ) -> dict:
+        from .tools.signatures import apply_signature_map as _apply
+
+        info = self._require_session(session_id)
+        count = _apply(info.program, signature_json_map)
+        return {
+            "session_id": session_id or self._active_session_id,
+            "matched": count,
+        }
+
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 

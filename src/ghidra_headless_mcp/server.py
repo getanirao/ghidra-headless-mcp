@@ -215,6 +215,42 @@ TOOLS = [
             "required": ["session_a", "session_b"],
         },
     ),
+    # ── Function fingerprinting / signature transfer ────────────────
+    types.Tool(
+        name="calculate_function_fingerprint",
+        description="Generate a behavior-based structural hash for a function. Survives compiler shuffling across binary versions.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "func_name": {"type": "string", "description": "Function name or address"},
+                "session_id": {"type": "string"},
+            },
+            "required": ["func_name"],
+        },
+    ),
+    types.Tool(
+        name="export_signature_map",
+        description="Export a complete signature map of every function in the current binary. Output can be saved and later applied to a new version.",
+        inputSchema={
+            "type": "object",
+            "properties": {"session_id": {"type": "string"}},
+        },
+    ),
+    types.Tool(
+        name="apply_signature_map",
+        description="Scan the current binary, match functions by structural fingerprint against a previously exported map, and rename matches automatically.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "signature_json_map": {
+                    "type": "object",
+                    "description": "Signature map from a previous export_signature_map call",
+                },
+                "session_id": {"type": "string"},
+            },
+            "required": ["signature_json_map"],
+        },
+    ),
 ]
 
 
@@ -328,6 +364,14 @@ def _dispatch(name: str, args: dict):
             session_a=args["session_a"],
             session_b=args["session_b"],
         )
+
+    # Function fingerprinting / signature transfer
+    if name == "calculate_function_fingerprint":
+        return session.calculate_function_fingerprint(args["func_name"], session_id=sid)
+    if name == "export_signature_map":
+        return session.export_signature_map(session_id=sid)
+    if name == "apply_signature_map":
+        return session.apply_signature_map(args["signature_json_map"], session_id=sid)
 
     raise ValueError(f"Unknown tool: {name}")
 
