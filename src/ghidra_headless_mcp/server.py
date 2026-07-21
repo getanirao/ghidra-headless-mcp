@@ -243,6 +243,15 @@ TOOLS = [
             "required": ["session_a", "session_b"],
         },
     ),
+    # ── Workspace reporting ─────────────────────────────────────────
+    types.Tool(
+        name="generate_workspace_report",
+        description="Produce a Markdown summary of the active workspace — functions, entry points, custom symbols, recovered structures, renamed functions, and comment count. Replaces a GUI CodeBrowser window.",
+        inputSchema={
+            "type": "object",
+            "properties": {"session_id": {"type": "string"}},
+        },
+    ),
     # ── P-code micro-emulation ──────────────────────────────────────
     types.Tool(
         name="emulate_slice",
@@ -431,6 +440,10 @@ def _dispatch(name: str, args: dict):
             session_a=args["session_a"],
             session_b=args["session_b"],
         )
+
+    # Reporting
+    if name == "generate_workspace_report":
+        return session.generate_workspace_report(session_id=sid)
 
     # Emulation
     if name == "emulate_slice":

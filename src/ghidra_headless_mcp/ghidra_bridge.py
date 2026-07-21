@@ -676,6 +676,16 @@ class GhidraSession:
             "common_count": len(common),
         }
 
+    # ── Workspace reporting ────────────────────────────────────────────
+
+    def generate_workspace_report(
+        self, session_id: Optional[str] = None
+    ) -> str:
+        from .tools.reporter import build_workspace_report
+
+        info = self._require_session(session_id)
+        return build_workspace_report(info.program)
+
     # ── P-code micro-emulation ─────────────────────────────────────────
 
     def emulate_slice(

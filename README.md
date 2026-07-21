@@ -63,6 +63,7 @@ Most tools accept an optional `session_id` parameter — omit it to use the most
 | `get_cross_references` | Cross-references to/from an address. |
 | `get_call_graph` | Recursive call graph + callers for a function. |
 | `analyze_and_decompile_entrypoints` | Composite — bulk decompile all entry points (program entry, exports, `main`, `_start`, etc.) in one call. |
+| `generate_workspace_report` | Produce a Markdown summary of the active workspace — entry points, function count, custom symbols, recovered structures, renamed functions, comments. Replaces a GUI CodeBrowser window. |
 
 ### Write / Mutation
 
