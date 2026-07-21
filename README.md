@@ -6,39 +6,26 @@ MCP (Model Context Protocol) server that exposes Ghidra's headless analysis capa
 
 This server communicates **exclusively over standard process stdio** — there is no HTTP socket, no TCP listener, and no network interface exposed. It is inherently immune to LAN/WAN exposure, SSRF, and unauthenticated API attacks. The only way to interact with it is for an MCP client to launch it as a subprocess and communicate via stdin/stdout.
 
-## Prerequisites
+## Quick Start
 
-- Python 3.10+
-- Ghidra 11.x+ installed
-- Java 17+ (required by Ghidra)
-
-## Setup
+### Local
 
 ```bash
-# Install the package
 pip install -e .
-
-# Or install dependencies directly
-pip install mcp pyhidra
+set GHIDRA_INSTALL_DIR=C:\path\to\ghidra   # Windows
+ghidra-mcp
 ```
 
-## Usage
-
-Set `GHIDRA_INSTALL_DIR` or pass `--ghidra-dir`:
+### Docker
 
 ```bash
-# Windows
-set GHIDRA_INSTALL_DIR=C:\path\to\ghidra
-ghidra-mcp
-
-# Linux/macOS
-export GHIDRA_INSTALL_DIR=/opt/ghidra
-ghidra-mcp
+docker build -t ghidra-headless-mcp .
+docker run -i --rm -v /path/to/binaries:/data ghidra-headless-mcp
 ```
 
-The server runs on stdio transport — configure it as an MCP server in your AI client:
+The container bundles JDK 17, Ghidra 11.2, and the server — no host dependencies beyond Docker.
 
-### Claude Desktop config (`claude_desktop_config.json`)
+## Claude Desktop config
 
 ```json
 {
@@ -54,92 +41,91 @@ The server runs on stdio transport — configure it as an MCP server in your AI 
 
 ## Tools
 
-### Read/Analysis tools
+### Session management
 
-#### `analyze_binary`
+| Tool | Description |
+|---|---|
+| `analyze_binary` | Import + analyze a binary, returns a `session_id`. Reuses the ID if provided, otherwise auto-generates. |
+| `list_sessions` | List all active workspaces with their session IDs, binary paths, and load times. |
+| `close_session` | Close a session and free its Ghidra project resources. |
 
-Import a binary into a new Ghidra project with auto-analysis. Returns metadata. Subsequent tools operate on this binary until a new one is loaded.
+Most tools accept an optional `session_id` parameter — omit it to use the most recently loaded session.
 
-**Parameters:**
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `binary_path` | string | yes | Path to the binary file |
-| `project_dir` | string | no | Project directory (defaults to binary's parent) |
+### Read / Analysis
 
-#### `decompile_function`
+| Tool | Description |
+|---|---|
+| `decompile_function` | Decompile a function by name or address. |
+| `decompile_function_paginated` | Decompile with `line_start`, `line_end`, `max_tokens` (token-budget truncation), and `summarize` (strips boilerplate locals + collapsing blank lines). Prevents context-window exhaustion. |
+| `get_data_types` | List all data types defined in the program. |
+| `get_cross_references` | Cross-references to/from an address. |
+| `get_call_graph` | Recursive call graph + callers for a function. |
+| `analyze_and_decompile_entrypoints` | Composite — bulk decompile all entry points (program entry, exports, `main`, `_start`, etc.) in one call. |
 
-Decompile a single function to C code.
+### Write / Mutation
 
-**Parameters:**
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `function_name` | string | yes | Function name (e.g. `main`) or hex address (e.g. `0x401000`) |
+| Tool | Description |
+|---|---|
+| `rename_symbol` | Rename a function or label. Stored in the Ghidra project DB. |
+| `add_comment` | Attach a comment (`plate`, `pre`, `post`, `eol`, `repeatable`). |
+| `create_struct` | Create a custom structured data type from a JSON member layout `[{offset, name, type}, ...]`. Offsets are optional. |
+| `retype_variable` | Re-type a local variable or function parameter (e.g. `undefined4*` → `MyStruct*`). |
 
-#### `get_data_types`
+### Assembly-level
 
-List all data types defined in the loaded program.
+| Tool | Description |
+|---|---|
+| `disassemble_range` | Disassemble N raw instructions at an address — returns mnemonic, operands, hex bytes, and length for precise lower-level inspection. |
 
-#### `get_cross_references`
+### Binary diffing
 
-Get cross-references to and from an address.
+| Tool | Description |
+|---|---|
+| `diff_binaries` | Compare two loaded sessions by function name and body size. Returns functions unique to each side and changed functions. |
 
-**Parameters:**
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `address` | string | yes | Address to query (e.g. `0x401000`) |
-| `max_results` | integer | no | Max references per direction (default: 100) |
+## Workspace Sessions
 
-#### `get_call_graph`
+Each `analyze_binary` call creates a named session. Sessions keep their Ghidra project open independently, so multiple binaries can be loaded concurrently:
 
-Get the call graph for a function — who it calls (recursively) and who calls it.
+```python
+# Load two binaries into separate sessions
+s1 = analyze_binary(binary_path="/bin/a.out")        # auto session_id
+s2 = analyze_binary(binary_path="/bin/b.out", session_id="my_session")
 
-**Parameters:**
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `function_name` | string | yes | Function name or address |
-| `max_depth` | integer | no | Recursion depth for callees (default: 3) |
+# Operate on a specific session
+decompile_function(function_name="main", session_id=s1.session_id)
 
-### Write/Mutation tools
+# Diff them
+diff_binaries(session_a=s1.session_id, session_b="my_session")
+```
 
-#### `rename_symbol`
+## Deployment
 
-Rename a function or label at a given address. Changes are stored in the Ghidra project database.
+### Docker (multi-user / CI)
 
-**Parameters:**
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `address` | string | yes | Address of the symbol (e.g. `0x401000`) |
-| `new_name` | string | yes | New name for the symbol |
+```bash
+docker build -t ghidra-headless-mcp .
 
-#### `add_comment`
+# Run as an MCP subprocess
+docker run -i --rm \
+  -v /data/binaries:/data \
+  ghidra-headless-mcp \
+  --ghidra-dir /opt/ghidra
+```
 
-Attach a comment to a code unit at a given address. Comment types control where and how the comment is displayed in the Ghidra UI.
-
-**Parameters:**
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `address` | string | yes | Address to comment on (e.g. `0x401000`) |
-| `text` | string | yes | Comment body text |
-| `comment_type` | string | no | `plate` (banner), `pre`, `post`, `eol`, or `repeatable` (default: `plate`) |
-
-### Batch/Composite tools
-
-#### `analyze_and_decompile_entrypoints`
-
-Bulk decompilation of all entry points in one call — combines the program entry, exports, and known conventions (`main`, `WinMain`, `_start`, `entry`, `DllMain`, `DriverEntry`). Prevents AI tool-call bloat by avoiding N sequential `decompile_function` requests.
-
-**Parameters:** None.
+The `Dockerfile` bundles Ghidra 11.2 and JDK 17 in a slim Python 3.11 image. Bind-mount your binaries directory at runtime.
 
 ## Project Structure
 
 ```
 ghidra-headless-mcp/
+├── Dockerfile
 ├── pyproject.toml
 ├── README.md
 └── src/ghidra_headless_mcp/
     ├── __init__.py
     ├── server.py          # MCP server, tool registry, stdio transport
-    ├── ghidra_bridge.py   # GhidraSession — pyhidra wrapper
+    ├── ghidra_bridge.py   # GhidraSession — pyhidra wrapper, all tool logic
     └── tools/
         └── __init__.py
 ```
@@ -147,7 +133,7 @@ ghidra-headless-mcp/
 ## How it works
 
 1. `pyhidra.start()` boots Ghidra's JVM once at server startup
-2. `analyze_binary` creates a temporary Ghidra project and opens the binary
-3. All subsequent tools operate on the currently loaded program via Ghidra's Java API (accessed through JPype)
-4. Write tools (`rename_symbol`, `add_comment`) apply changes directly to the program database
-5. Calling `analyze_binary` again closes the previous program and loads a new one
+2. Each `analyze_binary` call opens a new Ghidra project in its own named session
+3. Read/write tools route to the requested session via `session_id` (or the active default)
+4. Write tools apply changes directly to the Ghidra program database
+5. Sessions persist until explicitly closed — enabling multi-binary workflows and diffing

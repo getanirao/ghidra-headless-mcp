@@ -15,181 +15,220 @@ logger = logging.getLogger(__name__)
 session = GhidraSession(ghidra_dir=os.environ.get("GHIDRA_INSTALL_DIR"))
 
 
+def _sid(arguments: dict) -> str | None:
+    return arguments.get("session_id")
+
+
+TOOLS = [
+    # ── Session management ──────────────────────────────────────────
+    types.Tool(
+        name="analyze_binary",
+        description="Import and analyze a binary into a named session (creates or replaces). Returns session_id.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "binary_path": {"type": "string", "description": "Path to the binary file"},
+                "project_dir": {"type": "string", "description": "Optional project directory"},
+                "session_id": {"type": "string", "description": "Optional session ID (auto-generated if omitted)"},
+            },
+            "required": ["binary_path"],
+        },
+    ),
+    types.Tool(
+        name="list_sessions",
+        description="List all active session workspaces",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    types.Tool(
+        name="close_session",
+        description="Close and remove a session workspace",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID to close"},
+            },
+            "required": ["session_id"],
+        },
+    ),
+    # ── Read / analysis ─────────────────────────────────────────────
+    types.Tool(
+        name="decompile_function",
+        description="Decompile a function by name or address",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "function_name": {"type": "string", "description": "Function name or hex address"},
+                "session_id": {"type": "string", "description": "Session ID (defaults to active)"},
+            },
+            "required": ["function_name"],
+        },
+    ),
+    types.Tool(
+        name="decompile_function_paginated",
+        description="Decompile with line range, token budget, and optional summarization. Prevents context-window exhaustion on large functions.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "function_name": {"type": "string", "description": "Function name or address"},
+                "line_start": {"type": "integer", "description": "1-indexed start line"},
+                "line_end": {"type": "integer", "description": "1-indexed end line (exclusive)"},
+                "max_tokens": {"type": "integer", "description": "Truncate output to ~N tokens"},
+                "summarize": {"type": "boolean", "description": "Strip boilerplate locals and blank lines"},
+                "session_id": {"type": "string"},
+            },
+            "required": ["function_name"],
+        },
+    ),
+    types.Tool(
+        name="get_data_types",
+        description="List all data types in the loaded program",
+        inputSchema={
+            "type": "object",
+            "properties": {"session_id": {"type": "string"}},
+        },
+    ),
+    types.Tool(
+        name="get_cross_references",
+        description="Get cross-references to and from an address",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "address": {"type": "string", "description": "Address (e.g. 0x401000)"},
+                "max_results": {"type": "integer", "default": 100},
+                "session_id": {"type": "string"},
+            },
+            "required": ["address"],
+        },
+    ),
+    types.Tool(
+        name="get_call_graph",
+        description="Get call graph for a function — who it calls and who calls it",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "function_name": {"type": "string"},
+                "max_depth": {"type": "integer", "default": 3},
+                "session_id": {"type": "string"},
+            },
+            "required": ["function_name"],
+        },
+    ),
+    types.Tool(
+        name="analyze_and_decompile_entrypoints",
+        description="Composite: bulk decompile all entry points in one call",
+        inputSchema={
+            "type": "object",
+            "properties": {"session_id": {"type": "string"}},
+        },
+    ),
+    # ── Write / mutation ────────────────────────────────────────────
+    types.Tool(
+        name="rename_symbol",
+        description="Rename a function or label at a given address",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "address": {"type": "string", "description": "Address of the symbol"},
+                "new_name": {"type": "string"},
+                "session_id": {"type": "string"},
+            },
+            "required": ["address", "new_name"],
+        },
+    ),
+    types.Tool(
+        name="add_comment",
+        description="Attach a comment to a code unit",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "address": {"type": "string"},
+                "text": {"type": "string"},
+                "comment_type": {"type": "string", "default": "plate", "description": "plate, pre, post, eol, repeatable"},
+                "session_id": {"type": "string"},
+            },
+            "required": ["address", "text"],
+        },
+    ),
+    types.Tool(
+        name="create_struct",
+        description="Create a custom structured data type from a JSON member layout",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Struct name"},
+                "members": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "offset": {"type": "integer", "description": "Byte offset (optional, appended if omitted)"},
+                            "name": {"type": "string", "description": "Field name"},
+                            "type": {"type": "string", "description": "Type string (int, char, MyStruct*, etc.)"},
+                        },
+                        "required": ["name", "type"],
+                    },
+                    "description": "Array of member definitions",
+                },
+                "session_id": {"type": "string"},
+            },
+            "required": ["name", "members"],
+        },
+    ),
+    types.Tool(
+        name="retype_variable",
+        description="Change a local variable or parameter's type in a function",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "address": {"type": "string", "description": "Address inside the function"},
+                "variable_name": {"type": "string"},
+                "new_type": {"type": "string", "description": "New type (e.g. MyStruct*, int)"},
+                "session_id": {"type": "string"},
+            },
+            "required": ["address", "variable_name", "new_type"],
+        },
+    ),
+    # ── Assembly grain ──────────────────────────────────────────────
+    types.Tool(
+        name="disassemble_range",
+        description="Disassemble raw instructions at an address (mnemonic, operands, bytes)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "address": {"type": "string", "description": "Start address"},
+                "instruction_count": {"type": "integer", "default": 10},
+                "session_id": {"type": "string"},
+            },
+            "required": ["address"],
+        },
+    ),
+    # ── Binary diffing ──────────────────────────────────────────────
+    types.Tool(
+        name="diff_binaries",
+        description="Compare two loaded sessions by function names and body sizes",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "session_a": {"type": "string", "description": "First session ID"},
+                "session_b": {"type": "string", "description": "Second session ID"},
+            },
+            "required": ["session_a", "session_b"],
+        },
+    ),
+]
+
+
 async def serve():
     server = Server("ghidra-headless-mcp")
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
-        return [
-            types.Tool(
-                name="analyze_binary",
-                description="Import and analyze a binary with Ghidra (auto-analysis enabled)",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "binary_path": {
-                            "type": "string",
-                            "description": "Path to the binary file to analyze",
-                        },
-                        "project_dir": {
-                            "type": "string",
-                            "description": "Optional project directory (defaults to binary parent dir)",
-                        },
-                    },
-                    "required": ["binary_path"],
-                },
-            ),
-            types.Tool(
-                name="decompile_function",
-                description="Decompile a function by name or address",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "function_name": {
-                            "type": "string",
-                            "description": "Function name or hex address (e.g. 'main' or '0x401000')",
-                        },
-                    },
-                    "required": ["function_name"],
-                },
-            ),
-            types.Tool(
-                name="get_data_types",
-                description="List all data types defined in the program",
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
-                },
-            ),
-            types.Tool(
-                name="get_cross_references",
-                description="Get cross-references to and from an address",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "address": {
-                            "type": "string",
-                            "description": "Address in the binary (e.g. '0x401000')",
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Maximum references per direction (default 100)",
-                            "default": 100,
-                        },
-                    },
-                    "required": ["address"],
-                },
-            ),
-            types.Tool(
-                name="get_call_graph",
-                description="Get call graph for a function (who it calls and who calls it)",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "function_name": {
-                            "type": "string",
-                            "description": "Function name or address",
-                        },
-                        "max_depth": {
-                            "type": "integer",
-                            "description": "Max depth for nested call resolution (default 3)",
-                            "default": 3,
-                        },
-                    },
-                    "required": ["function_name"],
-                },
-            ),
-            types.Tool(
-                name="rename_symbol",
-                description="Rename a symbol (function or label) at a given address",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "address": {
-                            "type": "string",
-                            "description": "Address of the symbol (e.g. '0x401000')",
-                        },
-                        "new_name": {
-                            "type": "string",
-                            "description": "New name for the symbol",
-                        },
-                    },
-                    "required": ["address", "new_name"],
-                },
-            ),
-            types.Tool(
-                name="add_comment",
-                description="Add a comment to a code unit at a given address",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "address": {
-                            "type": "string",
-                            "description": "Address to comment on (e.g. '0x401000')",
-                        },
-                        "text": {
-                            "type": "string",
-                            "description": "Comment text",
-                        },
-                        "comment_type": {
-                            "type": "string",
-                            "description": "Comment type: plate, pre, post, eol, or repeatable (default: plate)",
-                            "default": "plate",
-                        },
-                    },
-                    "required": ["address", "text"],
-                },
-            ),
-            types.Tool(
-                name="analyze_and_decompile_entrypoints",
-                description="Composite: bulk decompile all entry points (entry, main, exports) in one call",
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
-                },
-            ),
-        ]
+        return TOOLS
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         try:
-            if name == "analyze_binary":
-                result = session.analyze_binary(
-                    binary_path=arguments["binary_path"],
-                    project_dir=arguments.get("project_dir"),
-                )
-            elif name == "decompile_function":
-                result = session.decompile_function(
-                    function_name=arguments["function_name"],
-                )
-            elif name == "get_data_types":
-                result = session.get_data_types()
-            elif name == "get_cross_references":
-                result = session.get_cross_references(
-                    address=arguments["address"],
-                    max_results=arguments.get("max_results", 100),
-                )
-            elif name == "get_call_graph":
-                result = session.get_call_graph(
-                    function_name=arguments["function_name"],
-                    max_depth=arguments.get("max_depth", 3),
-                )
-            elif name == "rename_symbol":
-                result = session.rename_symbol(
-                    address=arguments["address"],
-                    new_name=arguments["new_name"],
-                )
-            elif name == "add_comment":
-                result = session.add_comment(
-                    address=arguments["address"],
-                    text=arguments["text"],
-                    comment_type=arguments.get("comment_type", "plate"),
-                )
-            elif name == "analyze_and_decompile_entrypoints":
-                result = session.analyze_and_decompile_entrypoints()
-            else:
-                raise ValueError(f"Unknown tool: {name}")
-
+            result = _dispatch(name, arguments)
             return [types.TextContent(type="text", text=_format_result(result))]
         except Exception as e:
             logger.exception("Tool call failed")
@@ -208,6 +247,89 @@ async def serve():
                 ),
             ),
         )
+
+
+def _dispatch(name: str, args: dict):
+    sid = args.get("session_id")
+
+    # Session management
+    if name == "analyze_binary":
+        return session.analyze_binary(
+            binary_path=args["binary_path"],
+            project_dir=args.get("project_dir"),
+            session_id=args.get("session_id"),
+        )
+    if name == "list_sessions":
+        return session.list_sessions()
+    if name == "close_session":
+        session.close_session(args["session_id"])
+        return {"status": "closed", "session_id": args["session_id"]}
+
+    # Read / analysis
+    if name == "decompile_function":
+        return session.decompile_function(args["function_name"], session_id=sid)
+    if name == "decompile_function_paginated":
+        return session.decompile_function_paginated(
+            function_name=args["function_name"],
+            line_start=args.get("line_start"),
+            line_end=args.get("line_end"),
+            max_tokens=args.get("max_tokens"),
+            summarize=args.get("summarize", False),
+            session_id=sid,
+        )
+    if name == "get_data_types":
+        return session.get_data_types(session_id=sid)
+    if name == "get_cross_references":
+        return session.get_cross_references(
+            address=args["address"],
+            max_results=args.get("max_results", 100),
+            session_id=sid,
+        )
+    if name == "get_call_graph":
+        return session.get_call_graph(
+            function_name=args["function_name"],
+            max_depth=args.get("max_depth", 3),
+            session_id=sid,
+        )
+    if name == "analyze_and_decompile_entrypoints":
+        return session.analyze_and_decompile_entrypoints(session_id=sid)
+
+    # Write / mutation
+    if name == "rename_symbol":
+        return session.rename_symbol(args["address"], args["new_name"], session_id=sid)
+    if name == "add_comment":
+        return session.add_comment(
+            address=args["address"],
+            text=args["text"],
+            comment_type=args.get("comment_type", "plate"),
+            session_id=sid,
+        )
+    if name == "create_struct":
+        return session.create_struct(args["name"], args["members"], session_id=sid)
+    if name == "retype_variable":
+        return session.retype_variable(
+            address=args["address"],
+            variable_name=args["variable_name"],
+            new_type=args["new_type"],
+            session_id=sid,
+        )
+
+    # Assembly
+    if name == "disassemble_range":
+        return session.disassemble_range(
+            address=args["address"],
+            instruction_count=args.get("instruction_count", 10),
+            session_id=sid,
+        )
+
+    # Diffing
+    if name == "diff_binaries":
+        return session.diff_binaries(
+            session_a=args["session_a"],
+            session_b=args["session_b"],
+        )
+
+    raise ValueError(f"Unknown tool: {name}")
 
 
 def _format_result(obj) -> str:

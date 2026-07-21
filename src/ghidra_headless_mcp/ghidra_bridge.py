@@ -1,5 +1,8 @@
 import time
 import logging
+import uuid
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -7,19 +10,53 @@ import pyhidra
 
 from ghidra.program.model.listing import FunctionManager, CodeUnit
 from ghidra.program.model.symbol import ReferenceManager, SourceType
+from ghidra.program.model.data import StructureDataType, CategoryPath, ByteDataType
 from ghidra.app.decompiler import DecompInterface
 from ghidra.util.task import ConsoleTaskMonitor
 
 logger = logging.getLogger(__name__)
 
 
+_SIMPLE_TYPES = {
+    "void": "void",
+    "bool": "bool",
+    "char": "char",
+    "byte": "byte",
+    "short": "short",
+    "int": "int",
+    "long": "long",
+    "longlong": "longlong",
+    "float": "float",
+    "double": "double",
+    "uint": "uint",
+    "ushort": "ushort",
+    "uint8": "uint8",
+    "uint16": "uint16",
+    "uint32": "uint32",
+    "uint64": "uint64",
+    "int8": "int8",
+    "int16": "int16",
+    "int32": "int32",
+    "int64": "int64",
+}
+
+
+@dataclass
+class SessionInfo:
+    session_id: str
+    launcher: object = None
+    program: object = None
+    flat_api: object = None
+    binary_path: str = ""
+    project_name: str = ""
+    loaded_at: float = 0.0
+
+
 class GhidraSession:
     def __init__(self, ghidra_dir: Optional[str] = None):
-        self._launcher = None
-        self._current_program = None
-        self._current_flat_api = None
-        self._current_binary_path = None
         self._ghidra_dir = ghidra_dir
+        self._sessions: dict[str, SessionInfo] = {}
+        self._active_session_id: Optional[str] = None
 
     def start(self):
         kwargs = {}
@@ -28,82 +65,174 @@ class GhidraSession:
         pyhidra.start(verbose=True, **kwargs)
         logger.info("pyhidra started")
 
-    def _close_program(self):
-        if self._launcher is not None:
+    def _make_session_id(self) -> str:
+        return uuid.uuid4().hex[:12]
+
+    def _require_session(self, session_id: Optional[str] = None) -> SessionInfo:
+        sid = session_id or self._active_session_id
+        if sid is None or sid not in self._sessions:
+            raise RuntimeError(
+                f"No active session. Call analyze_binary first or provide a valid session_id."
+            )
+        info = self._sessions[sid]
+        if info.program is None:
+            raise RuntimeError(f"Session {sid} has no loaded program.")
+        return info
+
+    def list_sessions(self) -> list[dict]:
+        return [
+            {
+                "session_id": sid,
+                "binary_path": info.binary_path,
+                "project_name": info.project_name,
+                "loaded_at": info.loaded_at,
+            }
+            for sid, info in self._sessions.items()
+            if info.binary_path
+        ]
+
+    def close_session(self, session_id: str):
+        info = self._sessions.get(session_id)
+        if info is None:
+            raise ValueError(f"Session {session_id} not found")
+        if info.launcher is not None:
             try:
-                self._launcher.close()
+                info.launcher.close()
             except Exception:
                 pass
-            self._launcher = None
-            self._current_program = None
-            self._current_flat_api = None
-            self._current_binary_path = None
+        del self._sessions[session_id]
+        if self._active_session_id == session_id:
+            self._active_session_id = (
+                next(iter(self._sessions)) if self._sessions else None
+            )
 
-    def analyze_binary(self, binary_path: str, project_dir: Optional[str] = None) -> dict:
+    def analyze_binary(
+        self,
+        binary_path: str,
+        project_dir: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> dict:
         binary_path = Path(binary_path).resolve()
         if not binary_path.exists():
             raise FileNotFoundError(f"Binary not found: {binary_path}")
 
-        self._close_program()
+        sid = session_id or self._make_session_id()
+        if sid in self._sessions:
+            self.close_session(sid)
 
         project_dir = Path(project_dir or binary_path.parent).resolve()
         project_name = f"_{binary_path.stem}_mcp_{int(time.time())}"
 
-        self._launcher = pyhidra.Launcher(
+        launcher = pyhidra.Launcher(
             project_dir=str(project_dir),
             project_name=project_name,
             binary_path=str(binary_path),
         )
-        self._launcher.open_program()
-        self._current_flat_api = self._launcher.flat_api
-        self._current_program = self._launcher.program
-        self._current_binary_path = str(binary_path)
+        launcher.open_program()
 
-        listing = self._current_program.getListing()
+        info = SessionInfo(
+            session_id=sid,
+            launcher=launcher,
+            program=launcher.program,
+            flat_api=launcher.flat_api,
+            binary_path=str(binary_path),
+            project_name=project_name,
+            loaded_at=time.time(),
+        )
+        self._sessions[sid] = info
+        self._active_session_id = sid
+
+        listing = info.program.getListing()
 
         return {
+            "session_id": sid,
             "binary": str(binary_path),
             "project": project_name,
-            "language": self._current_program.getLanguageID().getIdAsString(),
-            "compiler": self._current_program.getCompilerSpec().getCompilerSpecID().getIdAsString(),
-            "image_base": str(self._current_program.getImageBase()),
-            "min_address": str(self._current_program.getMinAddress()),
-            "max_address": str(self._current_program.getMaxAddress()),
+            "language": info.program.getLanguageID().getIdAsString(),
+            "compiler": info.program.getCompilerSpec().getCompilerSpecID().getIdAsString(),
+            "image_base": str(info.program.getImageBase()),
+            "min_address": str(info.program.getMinAddress()),
+            "max_address": str(info.program.getMaxAddress()),
             "num_functions": len(list(listing.getFunctions(True))),
         }
 
-    def _require_session(self):
-        if self._current_program is None:
-            raise RuntimeError("No binary loaded. Call analyze_binary first.")
+    # ── Read / analysis tools ──────────────────────────────────────────
 
-    def decompile_function(self, function_name: str) -> dict:
-        self._require_session()
-        flat = self._current_flat_api
-        program = self._current_program
-
+    def decompile_function(
+        self, function_name: str, session_id: Optional[str] = None
+    ) -> dict:
+        info = self._require_session(session_id)
+        program = info.program
         listing = program.getListing()
         func = _find_function(listing, function_name)
         if func is None:
             raise ValueError(f"Function '{function_name}' not found")
 
-        decompiler = DecompInterface()
-        decompiler.openProgram(program)
-        monitor = ConsoleTaskMonitor()
-        result = decompiler.decompileFunction(func, 0, monitor)
+        result = _do_decompile(program, func)
+        return {
+            "name": func.getName(),
+            "address": str(func.getEntryPoint()),
+            "signature": func.getSignature(),
+            "decompiled": result,
+        }
 
-        if not result or not result.decompileCompleted():
-            raise RuntimeError(f"Decompilation failed for '{function_name}'")
+    def decompile_function_paginated(
+        self,
+        function_name: str,
+        line_start: Optional[int] = None,
+        line_end: Optional[int] = None,
+        max_tokens: Optional[int] = None,
+        summarize: bool = False,
+        session_id: Optional[str] = None,
+    ) -> dict:
+        info = self._require_session(session_id)
+        program = info.program
+        listing = program.getListing()
+        func = _find_function(listing, function_name)
+        if func is None:
+            raise ValueError(f"Function '{function_name}' not found")
+
+        c_code = _do_decompile(program, func)
+        if summarize:
+            c_code = _summarize_c_code(c_code)
+
+        lines = c_code.split("\n")
+        total_lines = len(lines)
+
+        if line_start is not None:
+            line_start = max(0, line_start - 1)
+        else:
+            line_start = 0
+        if line_end is not None:
+            lines = lines[line_start:line_end]
+        else:
+            lines = lines[line_start:]
+
+        result = "\n".join(lines)
+
+        if max_tokens is not None:
+            estimated = len(result) // 4
+            if estimated > max_tokens:
+                ratio = max_tokens / estimated
+                keep_lines = max(1, int(len(lines) * ratio))
+                lines = lines[:keep_lines]
+                result = "\n".join(lines)
+                result += f"\n/*... truncated to ~{max_tokens} tokens ({len(lines)} of {total_lines} lines) ...*/"
 
         return {
             "name": func.getName(),
             "address": str(func.getEntryPoint()),
             "signature": func.getSignature(),
-            "decompiled": result.getDecompiledFunction().getC(),
+            "total_lines": total_lines,
+            "line_start": line_start,
+            "line_end": line_end if line_end else total_lines,
+            "summarized": summarize,
+            "decompiled": result,
         }
 
-    def get_data_types(self) -> list[dict]:
-        self._require_session()
-        program = self._current_program
+    def get_data_types(self, session_id: Optional[str] = None) -> list[dict]:
+        info = self._require_session(session_id)
+        program = info.program
         dtm = program.getDataTypeManager()
         types = []
 
@@ -121,9 +250,11 @@ class GhidraSession:
 
         return types
 
-    def get_cross_references(self, address: str, max_results: int = 100) -> dict:
-        self._require_session()
-        program = self._current_program
+    def get_cross_references(
+        self, address: str, max_results: int = 100, session_id: Optional[str] = None
+    ) -> dict:
+        info = self._require_session(session_id)
+        program = info.program
         addr = program.getAddressFactory().getAddress(address)
         if addr is None:
             raise ValueError(f"Invalid address: {address}")
@@ -156,69 +287,39 @@ class GhidraSession:
             "references_from": from_list,
         }
 
-    def rename_symbol(self, address: str, new_name: str) -> dict:
-        self._require_session()
-        program = self._current_program
-        addr = program.getAddressFactory().getAddress(address)
-        if addr is None:
-            raise ValueError(f"Invalid address: {address}")
+    def get_call_graph(
+        self, function_name: str, max_depth: int = 3, session_id: Optional[str] = None
+    ) -> dict:
+        info = self._require_session(session_id)
+        listing = info.program.getListing()
+        func = _find_function(listing, function_name)
+        if func is None:
+            raise ValueError(f"Function '{function_name}' not found")
 
-        fm = program.getFunctionManager()
-        func = fm.getFunctionAt(addr)
-        if func is not None:
-            old_name = func.getName()
-            func.setName(new_name, SourceType.USER_DEFINED)
-            return {"address": address, "old_name": old_name, "new_name": new_name, "type": "function"}
+        calls_from = _resolve_calls(func, info.program, max_depth)
 
-        symbol_table = program.getSymbolTable()
-        symbols = list(symbol_table.getSymbols(addr))
-        if not symbols:
-            raise ValueError(f"No symbol found at address {address}")
-
-        sym = symbols[0]
-        old_name = sym.getName()
-        sym.setName(new_name, SourceType.USER_DEFINED)
-        return {"address": address, "old_name": old_name, "new_name": new_name, "type": str(sym.getSymbolType())}
-
-    def add_comment(self, address: str, text: str, comment_type: str = "plate") -> dict:
-        self._require_session()
-        program = self._current_program
-        addr = program.getAddressFactory().getAddress(address)
-        if addr is None:
-            raise ValueError(f"Invalid address: {address}")
-
-        type_map = {
-            "plate": CodeUnit.PLATE_COMMENT,
-            "pre": CodeUnit.PRE_COMMENT,
-            "post": CodeUnit.POST_COMMENT,
-            "eol": CodeUnit.EOL_COMMENT,
-            "repeatable": CodeUnit.REPEATABLE_COMMENT,
-        }
-        ghidra_type = type_map.get(comment_type.lower())
-        if ghidra_type is None:
-            valid = ", ".join(type_map.keys())
-            raise ValueError(f"Invalid comment_type '{comment_type}'. Valid: {valid}")
-
-        listing = program.getListing()
-        cu = listing.getCodeUnitAt(addr)
-        if cu is None:
-            raise ValueError(f"No code unit at address {address}")
-
-        existing = cu.getComment(ghidra_type)
-        cu.setComment(ghidra_type, text)
+        calls_to = {}
+        fm: FunctionManager = info.program.getFunctionManager()
+        for caller in fm.getFunctions(True):
+            if caller == func:
+                continue
+            called_set = _resolve_calls(caller, info.program, 1)
+            if func.getName() in called_set or str(func.getEntryPoint()) in called_set:
+                calls_to[caller.getName()] = str(caller.getEntryPoint())
 
         return {
-            "address": address,
-            "comment_type": comment_type,
-            "length": len(text),
-            "replaced_existing": existing is not None,
+            "function": function_name,
+            "address": str(func.getEntryPoint()),
+            "calls": calls_from,
+            "called_by": calls_to,
         }
 
-    def analyze_and_decompile_entrypoints(self) -> list[dict]:
-        self._require_session()
-        program = self._current_program
+    def analyze_and_decompile_entrypoints(
+        self, session_id: Optional[str] = None
+    ) -> list[dict]:
+        info = self._require_session(session_id)
+        program = info.program
         fm = program.getFunctionManager()
-        listing = program.getListing()
 
         targets = set()
         entry = program.getExecutableEntrySet()
@@ -254,46 +355,354 @@ class GhidraSession:
                 "name": func.getName(),
                 "address": key,
                 "signature": func.getSignature(),
-                "decompiled": result.getDecompiledFunction().getC() if (result and result.decompileCompleted()) else None,
+                "decompiled": result.getDecompiledFunction().getC()
+                if (result and result.decompileCompleted())
+                else None,
             })
 
         return results
 
-    def get_call_graph(self, function_name: str, max_depth: int = 3) -> dict:
-        self._require_session()
-        listing = self._current_program.getListing()
-        func = _find_function(listing, function_name)
-        if func is None:
-            raise ValueError(f"Function '{function_name}' not found")
+    # ── Write / mutation tools ─────────────────────────────────────────
 
-        calls_from = _resolve_calls(func, self._current_program, max_depth)
+    def rename_symbol(
+        self, address: str, new_name: str, session_id: Optional[str] = None
+    ) -> dict:
+        info = self._require_session(session_id)
+        program = info.program
+        addr = program.getAddressFactory().getAddress(address)
+        if addr is None:
+            raise ValueError(f"Invalid address: {address}")
 
-        calls_to = {}
-        fm: FunctionManager = self._current_program.getFunctionManager()
-        for caller in fm.getFunctions(True):
-            if caller == func:
-                continue
-            called_set = _resolve_calls(caller, self._current_program, 1)
-            if func.getName() in called_set or str(func.getEntryPoint()) in called_set:
-                calls_to[caller.getName()] = str(caller.getEntryPoint())
+        fm = program.getFunctionManager()
+        func = fm.getFunctionAt(addr)
+        if func is not None:
+            old_name = func.getName()
+            func.setName(new_name, SourceType.USER_DEFINED)
+            return {
+                "address": address,
+                "old_name": old_name,
+                "new_name": new_name,
+                "type": "function",
+            }
+
+        symbol_table = program.getSymbolTable()
+        symbols = list(symbol_table.getSymbols(addr))
+        if not symbols:
+            raise ValueError(f"No symbol found at address {address}")
+
+        sym = symbols[0]
+        old_name = sym.getName()
+        sym.setName(new_name, SourceType.USER_DEFINED)
+        return {
+            "address": address,
+            "old_name": old_name,
+            "new_name": new_name,
+            "type": str(sym.getSymbolType()),
+        }
+
+    def add_comment(
+        self,
+        address: str,
+        text: str,
+        comment_type: str = "plate",
+        session_id: Optional[str] = None,
+    ) -> dict:
+        info = self._require_session(session_id)
+        program = info.program
+        addr = program.getAddressFactory().getAddress(address)
+        if addr is None:
+            raise ValueError(f"Invalid address: {address}")
+
+        type_map = {
+            "plate": CodeUnit.PLATE_COMMENT,
+            "pre": CodeUnit.PRE_COMMENT,
+            "post": CodeUnit.POST_COMMENT,
+            "eol": CodeUnit.EOL_COMMENT,
+            "repeatable": CodeUnit.REPEATABLE_COMMENT,
+        }
+        ghidra_type = type_map.get(comment_type.lower())
+        if ghidra_type is None:
+            valid = ", ".join(type_map.keys())
+            raise ValueError(f"Invalid comment_type '{comment_type}'. Valid: {valid}")
+
+        listing = program.getListing()
+        cu = listing.getCodeUnitAt(addr)
+        if cu is None:
+            raise ValueError(f"No code unit at address {address}")
+
+        existing = cu.getComment(ghidra_type)
+        cu.setComment(ghidra_type, text)
 
         return {
-            "function": function_name,
-            "address": str(func.getEntryPoint()),
-            "calls": calls_from,
-            "called_by": calls_to,
+            "address": address,
+            "comment_type": comment_type,
+            "length": len(text),
+            "replaced_existing": existing is not None,
+        }
+
+    def create_struct(
+        self, name: str, members: list[dict], session_id: Optional[str] = None
+    ) -> dict:
+        info = self._require_session(session_id)
+        program = info.program
+        dtm = program.getDataTypeManager()
+
+        existing = dtm.getDataType(CategoryPath.ROOT, name)
+        if existing is not None:
+            raise ValueError(f"Data type '{name}' already exists")
+
+        struct = StructureDataType(CategoryPath.ROOT, name, 0)
+        created = []
+
+        for m in members:
+            offset = m.get("offset")
+            field_name = m.get("name", "")
+            type_str = m.get("type", "byte")
+
+            ghidra_type = _resolve_type(dtm, type_str)
+            if offset is not None:
+                struct.insertAtOffset(offset, ghidra_type, ghidra_type.getLength(), field_name, None)
+            else:
+                struct.add(ghidra_type, ghidra_type.getLength(), field_name, None)
+            created.append({
+                "offset": offset if offset is not None else struct.getLength(),
+                "name": field_name,
+                "type": type_str,
+            })
+
+        dtm.addDataType(struct, None)
+        return {
+            "name": name,
+            "size": struct.getLength(),
+            "members": created,
+        }
+
+    def retype_variable(
+        self,
+        address: str,
+        variable_name: str,
+        new_type: str,
+        session_id: Optional[str] = None,
+    ) -> dict:
+        info = self._require_session(session_id)
+        program = info.program
+        addr = program.getAddressFactory().getAddress(address)
+        if addr is None:
+            raise ValueError(f"Invalid address: {address}")
+
+        fm = program.getFunctionManager()
+        func = fm.getFunctionContaining(addr)
+        if func is None:
+            raise ValueError(f"No function found containing address {address}")
+
+        dtm = program.getDataTypeManager()
+        ghidra_type = _resolve_type(dtm, new_type)
+
+        local_vars = func.getLocalVariables()
+        for var in local_vars:
+            if var.getName() == variable_name:
+                old_type = var.getDataType().getName()
+                var.setDataType(ghidra_type, SourceType.USER_DEFINED)
+                return {
+                    "function": func.getName(),
+                    "variable": variable_name,
+                    "old_type": old_type,
+                    "new_type": new_type,
+                }
+
+        params = func.getParameters()
+        for param in params:
+            if param.getName() == variable_name:
+                old_type = param.getDataType().getName()
+                param.setDataType(ghidra_type, SourceType.USER_DEFINED)
+                return {
+                    "function": func.getName(),
+                    "variable": variable_name,
+                    "old_type": old_type,
+                    "new_type": new_type,
+                }
+
+        raise ValueError(
+            f"Variable '{variable_name}' not found in function '{func.getName()}'"
+        )
+
+    # ── Assembly-level tools ───────────────────────────────────────────
+
+    def disassemble_range(
+        self, address: str, instruction_count: int = 10, session_id: Optional[str] = None
+    ) -> list[dict]:
+        info = self._require_session(session_id)
+        program = info.program
+        listing = program.getListing()
+        start_addr = program.getAddressFactory().getAddress(address)
+        if start_addr is None:
+            raise ValueError(f"Invalid address: {address}")
+
+        instructions = []
+        addr = start_addr
+        count = 0
+        while count < instruction_count:
+            cu = listing.getCodeUnitAt(addr)
+            if cu is None:
+                break
+            from ghidra.program.model.listing import Instruction
+            if not isinstance(cu, Instruction):
+                break
+            mnemonic = cu.getMnemonicString()
+            op_str = cu.getDefaultOperandRepresentation()
+            raw_bytes = _get_bytes(program, addr, cu.getLength())
+            instructions.append({
+                "address": str(addr),
+                "mnemonic": mnemonic,
+                "operands": op_str,
+                "bytes": raw_bytes,
+                "length": cu.getLength(),
+            })
+            count += 1
+            addr = addr.add(cu.getLength())
+
+        return instructions
+
+    # ── Binary diffing ─────────────────────────────────────────────────
+
+    def diff_binaries(
+        self, session_a: str, session_b: str
+    ) -> dict:
+        info_a = self._require_session(session_a)
+        info_b = self._require_session(session_b)
+
+        fm_a = info_a.program.getFunctionManager()
+        fm_b = info_b.program.getFunctionManager()
+
+        def func_map(fm):
+            out = {}
+            for f in fm.getFunctions(True):
+                out[f.getName()] = {
+                    "address": str(f.getEntryPoint()),
+                    "signature": f.getSignature(),
+                    "body_bytes": f.getBody().getNumAddresses(),
+                }
+            return out
+
+        map_a = func_map(fm_a)
+        map_b = func_map(fm_b)
+
+        names_a = set(map_a)
+        names_b = set(map_b)
+
+        only_a = {n: map_a[n] for n in names_a - names_b}
+        only_b = {n: map_b[n] for n in names_b - names_a}
+
+        common = names_a & names_b
+        changed = {}
+        for name in common:
+            if map_a[name]["body_bytes"] != map_b[name]["body_bytes"]:
+                changed[name] = {"a": map_a[name], "b": map_b[name]}
+
+        return {
+            "session_a": {"id": session_a, "binary": info_a.binary_path},
+            "session_b": {"id": session_b, "binary": info_b.binary_path},
+            "only_in_a": only_a,
+            "only_in_b": only_b,
+            "changed": changed,
+            "common_count": len(common),
         }
 
 
+# ── Helpers ─────────────────────────────────────────────────────────────
+
 def _find_function(listing, name_or_addr: str):
     fm = listing.getFunctionManager()
-    func = fm.getFunctionAt(listing.getProgram().getAddressFactory().getAddress(name_or_addr))
-    if func is not None:
-        return func
+    addr = listing.getProgram().getAddressFactory().getAddress(name_or_addr)
+    if addr is not None:
+        func = fm.getFunctionAt(addr)
+        if func is not None:
+            return func
     for f in fm.getFunctions(True):
         if f.getName() == name_or_addr:
             return f
     return None
+
+
+def _do_decompile(program, func) -> str:
+    decompiler = DecompInterface()
+    decompiler.openProgram(program)
+    monitor = ConsoleTaskMonitor()
+    result = decompiler.decompileFunction(func, 0, monitor)
+    if not result or not result.decompileCompleted():
+        raise RuntimeError(f"Decompilation failed for '{func.getName()}'")
+    return result.getDecompiledFunction().getC()
+
+
+def _summarize_c_code(code: str) -> str:
+    lines = code.split("\n")
+    cleaned = []
+    prev_empty = False
+    for line in lines:
+        stripped = line.rstrip()
+        if stripped == "":
+            if prev_empty:
+                continue
+            prev_empty = True
+        else:
+            prev_empty = False
+        if re.match(r"^\s*(int|char|byte|uint|long|short|float|double)\s+\w+\s*;?\s*$", stripped):
+            if re.search(r"local_|stack|pad|res", stripped, re.IGNORECASE):
+                continue
+        if re.match(r"^\s*undefined\d+\s+\w+\s*;?\s*$", stripped):
+            continue
+        cleaned.append(stripped)
+    return "\n".join(cleaned)
+
+
+def _resolve_type(dtm, type_str: str):
+    from ghidra.program.model.data import PointerDataType
+    type_str = type_str.strip()
+    is_ptr = type_str.endswith("*")
+    base = type_str.rstrip("*").strip()
+
+    dt = dtm.getDataType(CategoryPath.ROOT, base)
+    if dt is None and base in _SIMPLE_TYPES:
+        from ghidra.program.model.data import (
+            BooleanDataType, ByteDataType, ShortDataType, IntegerDataType,
+            LongDataType, FloatDataType, DoubleDataType, UnsignedIntegerDataType,
+        )
+        _MAP = {
+            "void": None,
+            "bool": BooleanDataType(),
+            "char": ByteDataType(),
+            "byte": ByteDataType(),
+            "short": ShortDataType(),
+            "int": IntegerDataType(),
+            "long": LongDataType(),
+            "longlong": LongDataType(),
+            "float": FloatDataType(),
+            "double": DoubleDataType(),
+            "uint": UnsignedIntegerDataType(),
+        }
+        dt = _MAP.get(base)
+
+    if dt is None:
+        for existing in dtm.getAllDataTypes():
+            if existing.getName() == base:
+                dt = existing
+                break
+
+    if dt is None:
+        dt = ByteDataType()
+
+    if is_ptr:
+        return PointerDataType(dt)
+    return dt
+
+
+def _get_bytes(program, addr, length):
+    try:
+        mem = program.getMemory()
+        bb = mem.getBytes(addr, length)
+        return " ".join(f"{b & 0xFF:02x}" for b in bb)
+    except Exception:
+        return ""
 
 
 def _resolve_calls(func, program, depth: int) -> dict:
