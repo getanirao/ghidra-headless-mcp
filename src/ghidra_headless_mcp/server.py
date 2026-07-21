@@ -396,6 +396,20 @@ TOOLS = [
         description="List all stashed signature groups currently in the local server cache (~/.ghidra_headless_mcp/signatures/).",
         inputSchema={"type": "object", "properties": {}},
     ),
+    # ── Nintendo ROM triage ─────────────────────────────────────────────
+    types.Tool(
+        name="triage_and_load_nintendo_rom",
+        description="Examines raw file magic header signatures to detect specific Nintendo console architectures (NES, SNES, GBA, NDS, Switch), headlessly maps correct language loaders, hooks multi-session project bindings, and applies automated signature caching overlays.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "rom_path": {"type": "string", "description": "Absolute system path to the targeted emulator ROM image or raw memory partition block dump."},
+                "session_id": {"type": "string", "description": "Optional session tracking token for parallel multi-binary session context."},
+                "project_dir": {"type": "string", "description": "Optional custom workspace path target location on the filesystem layer."},
+            },
+            "required": ["rom_path"],
+        },
+    ),
 ]
 
 
@@ -574,6 +588,14 @@ def _dispatch(name: str, args: dict):
         return session.auto_restore_current_binary(session_id=sid)
     if name == "list_stashed_signature_groups":
         return session.list_stashed_signature_groups()
+
+    # Nintendo ROM triage
+    if name == "triage_and_load_nintendo_rom":
+        return session.triage_and_load_nintendo_rom(
+            rom_path=args["rom_path"],
+            session_id=args.get("session_id"),
+            project_dir=args.get("project_dir"),
+        )
 
     raise ValueError(f"Unknown tool: {name}")
 

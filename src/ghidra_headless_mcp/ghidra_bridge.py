@@ -838,6 +838,71 @@ class GhidraSession:
 
         return list_stashed_groups()
 
+    # ── Nintendo ROM triage & load ───────────────────────────────────────
+
+    def triage_and_load_nintendo_rom(
+        self,
+        rom_path: str,
+        session_id: Optional[str] = None,
+        project_dir: Optional[str] = None,
+    ) -> dict:
+        from .tools.console_triage import detect_nintendo_platform
+
+        rom_path = Path(rom_path).resolve()
+        if not rom_path.exists():
+            raise FileNotFoundError(f"Binary not found: {rom_path}")
+
+        platform_name, lang_id, loader_name = detect_nintendo_platform(str(rom_path))
+
+        sid = session_id or self._make_session_id()
+        if sid in self._sessions:
+            self.close_session(sid)
+
+        project_dir = Path(project_dir or rom_path.parent).resolve()
+        short = platform_name.split()[0].lower()
+        project_name = f"_{rom_path.stem}_{short}_{int(time.time())}"
+
+        kwargs = dict(
+            project_dir=str(project_dir),
+            project_name=project_name,
+            binary_path=str(rom_path),
+        )
+        if lang_id != "Auto-Detect":
+            kwargs["language"] = lang_id
+
+        launcher = pyhidra.Launcher(**kwargs)
+        launcher.open_program()
+
+        info = SessionInfo(
+            session_id=sid,
+            launcher=launcher,
+            program=launcher.program,
+            flat_api=launcher.flat_api,
+            binary_path=str(rom_path),
+            project_name=project_name,
+            loaded_at=time.time(),
+        )
+        self._sessions[sid] = info
+        self._active_session_id = sid
+
+        from .tools.persistent_signatures import auto_restore_current_binary
+        try:
+            restore_result = auto_restore_current_binary(info.program)
+            matched = restore_result.get("matched", 0)
+            restore_status = f"Restored {matched} function names from signature cache"
+        except Exception:
+            restore_status = "No cached signatures found"
+
+        return {
+            "status": "Workspace successfully provisioned",
+            "session_id": sid,
+            "target_platform": platform_name,
+            "selected_loader_engine": loader_name,
+            "architecture_language_tag": info.program.getLanguageID().getIdAsString(),
+            "memory_spaces_mapped": [block.getName() for block in info.program.getMemory().getBlocks()],
+            "persistence_cache_status": restore_status,
+        }
+
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
