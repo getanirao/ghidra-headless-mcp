@@ -276,6 +276,44 @@ TOOLS = [
             "required": ["start_address"],
         },
     ),
+    types.Tool(
+        name="emulate_slice_with_taint",
+        description="Execute an instruction slice with automatic taint tracking. Specify a taint register; the tool reports when its value is modified or propagated to other registers.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "start_address": {"type": "string", "description": "Starting address"},
+                "instruction_count": {"type": "integer", "default": 10},
+                "initial_registers": {
+                    "type": "object",
+                    "description": "Register seeds, e.g. {\"r0\": 5, \"r1\": 0x41424344}",
+                    "additionalProperties": {"type": "integer"},
+                },
+                "taint_register": {"type": "string", "default": "r0", "description": "Register to track for data lineage"},
+                "session_id": {"type": "string"},
+            },
+            "required": ["start_address"],
+        },
+    ),
+    types.Tool(
+        name="emulate_slice_with_breakpoints",
+        description="Execute instructions until a break condition is met or the count expires. Conditions: R0==0, R1>0xFF, R2!=R3, PC==0x1234. Stops before or after the matching instruction.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "start_address": {"type": "string", "description": "Starting address"},
+                "instruction_count": {"type": "integer", "default": 50, "description": "Max steps before timeout"},
+                "initial_registers": {
+                    "type": "object",
+                    "additionalProperties": {"type": "integer"},
+                    "description": "Register seeds",
+                },
+                "break_condition": {"type": "string", "description": "Condition string, e.g. R0==0, R1>0xFF, PC==0x1234"},
+                "session_id": {"type": "string"},
+            },
+            "required": ["start_address"],
+        },
+    ),
     # ── Function fingerprinting / signature transfer ────────────────
     types.Tool(
         name="calculate_function_fingerprint",
@@ -452,6 +490,22 @@ def _dispatch(name: str, args: dict):
             instruction_count=args.get("instruction_count", 10),
             initial_registers=args.get("initial_registers"),
             track_registers=args.get("track_registers"),
+            session_id=sid,
+        )
+    if name == "emulate_slice_with_taint":
+        return session.emulate_slice_with_taint(
+            start_address=args["start_address"],
+            instruction_count=args.get("instruction_count", 10),
+            initial_registers=args.get("initial_registers"),
+            taint_register=args.get("taint_register", "r0"),
+            session_id=sid,
+        )
+    if name == "emulate_slice_with_breakpoints":
+        return session.emulate_slice_with_breakpoints(
+            start_address=args["start_address"],
+            instruction_count=args.get("instruction_count", 50),
+            initial_registers=args.get("initial_registers"),
+            break_condition=args.get("break_condition", ""),
             session_id=sid,
         )
 

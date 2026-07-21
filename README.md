@@ -129,18 +129,11 @@ The `Dockerfile` bundles Ghidra 11.2 and JDK 17 in a slim Python 3.11 image. Bin
 
 | Tool | Description |
 |---|---|
-| `emulate_slice` | Headlessly execute N instructions from an address using Ghidra's `EmulatorHelper`. Seed register state (e.g. `{"r0": 5, "r1": 0x41424344}`) and get a step-by-step trace of register mutations. Works on any Ghidra-supported architecture (ARM, x86, MIPS, etc.) — no GDB/LLDB, no network ports, no debugger stubs. |
+| `emulate_slice` | Headlessly execute N instructions. Seed register state and get a step-by-step trace of register mutations. |
+| `emulate_slice_with_taint` | Same as `emulate_slice` but with automated taint tracking — specify a taint register (e.g. `r0`) and the tool flags exactly when its value is modified or propagates to other registers. |
+| `emulate_slice_with_breakpoints` | Execute until a condition is met or the count expires. Condition syntax: `R0==0`, `R1>0xFF`, `R2!=R3`, `PC==0x1234`. Stops before or after the matching instruction. |
 
-**Example — trace ARM register propagation:**
-
-```python
-emulate_slice(
-    start_address="0x1000",
-    instruction_count=5,
-    initial_registers={"r0": 0xDEADBEEF, "r1": 0, "pc": 0x1000},
-)
-# Returns step array with register snapshots after each instruction
-```
+All run inside the pyhidra process via Ghidra's `EmulatorHelper` — no GDB/LLDB, no network ports, no debugger stubs. Works on ARM, x86, MIPS, and any Ghidra-supported architecture.
 
 ### Function fingerprinting / signature transfer
 

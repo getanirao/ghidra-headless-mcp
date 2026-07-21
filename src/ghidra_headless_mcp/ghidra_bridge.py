@@ -712,6 +712,54 @@ class GhidraSession:
             track_registers=track_registers,
         )
 
+    def emulate_slice_with_taint(
+        self,
+        start_address: str,
+        instruction_count: int = 10,
+        initial_registers: Optional[dict[str, int]] = None,
+        taint_register: str = "r0",
+        session_id: Optional[str] = None,
+    ) -> dict:
+        from .tools.emulation import emulate_slice_with_taint as _taint
+
+        info = self._require_session(session_id)
+        program = info.program
+        addr = program.getAddressFactory().getAddress(start_address)
+        if addr is None:
+            raise ValueError(f"Invalid address: {start_address}")
+
+        return _taint(
+            program=program,
+            start_address=addr,
+            instruction_count=instruction_count,
+            initial_registers=initial_registers or {},
+            taint_register=taint_register,
+        )
+
+    def emulate_slice_with_breakpoints(
+        self,
+        start_address: str,
+        instruction_count: int = 50,
+        initial_registers: Optional[dict[str, int]] = None,
+        break_condition: str = "",
+        session_id: Optional[str] = None,
+    ) -> dict:
+        from .tools.emulation import emulate_slice_with_breakpoints as _break
+
+        info = self._require_session(session_id)
+        program = info.program
+        addr = program.getAddressFactory().getAddress(start_address)
+        if addr is None:
+            raise ValueError(f"Invalid address: {start_address}")
+
+        return _break(
+            program=program,
+            start_address=addr,
+            instruction_count=instruction_count,
+            initial_registers=initial_registers or {},
+            break_condition=break_condition,
+        )
+
     # ── Function fingerprinting / signature transfer ──────────────────
 
     def calculate_function_fingerprint(
