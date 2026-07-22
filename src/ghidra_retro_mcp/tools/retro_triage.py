@@ -22,10 +22,13 @@ def detect_retro_platform(rom_path: str) -> Tuple[str, str, str]:
     if header[0:4] == b"NES\x1a":
         return "Nintendo Entertainment System (NES)", "6502:LE:16:default", "iNES Loader"
 
-    # 2. Game Boy Advance
-    if file_size >= 0xC0 and header[0xB2:0xB6] == b"\x24\xFF\xAE\x51":
-        return "Game Boy Advance (GBA)", "ARM:LE:32:v4t", "GBA ROM Loader"
-    if len(header) > 0x1C2 and header[0x1C0:0x1C4] == b"GBA":
+    # 2. Game Boy Advance — Nintendo logo at 0x04, fixed 0x96 at 0xB2
+    if (
+        file_size >= 0xC0
+        and len(header) >= 0xB3
+        and header[0x04:0x08] == b"\x24\xFF\xAE\x51"
+        and header[0xB2] == 0x96
+    ):
         return "Game Boy Advance (GBA)", "ARM:LE:32:v4t", "GBA ROM Loader"
 
     # 3. Nintendo DS

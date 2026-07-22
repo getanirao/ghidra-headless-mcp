@@ -900,7 +900,7 @@ class GhidraSession:
             self.close_session(sid)
 
         project_dir = Path(project_dir or rom_path.parent).resolve()
-        short = platform_name.split()[0].lower()
+        short = platform_name.split()[0].lower().replace("/", "_")
         project_name = f"_{rom_path.stem}_{short}_{int(time.time())}"
 
         kwargs = dict(
