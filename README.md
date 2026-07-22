@@ -8,6 +8,54 @@ MCP (Model Context Protocol) server that exposes Ghidra's headless analysis capa
 
 This server communicates **exclusively over standard process stdio** — there is no HTTP socket, no TCP listener, and no network interface exposed. It is inherently immune to LAN/WAN exposure, SSRF, and unauthenticated API attacks. The only way to interact with it is for an MCP client to launch it as a subprocess and communicate via stdin/stdout.
 
+## Hardware & Retro Ecosystem Integration
+
+`ghidra-retro-mcp` includes native out-of-the-box support for retro-reversing automation pipelines. The server container bundles pre-compiled execution dependencies for:
+
+- **Nintendo Entertainment System (NES)** via `GhidraNes`
+- **Super Nintendo Entertainment System (SNES)** via native 65816 memory maps
+- **Game Boy Advance (GBA)** via `gba-ghidra-loader`
+- **Nintendo DS (NDS)** via `NTRGhidra`
+- **Nintendo Switch** via `ghidra-switch-loader`
+- **PlayStation 1 (PSX)** via `ghidra_psx_ldr`
+- **Sega Genesis / Mega Drive** via native 68000 memory maps
+- **Sega Master System / Game Gear** via `Ghidra-SegaMasterSystem-Loader`
+- **Sega Dreamcast** via native SuperH4 memory maps
+
+### Zero-Input Triage — Worked Example (GBA)
+
+The primary entry point is `triage_and_load_retro_rom`. Call it with any ROM path and the server handles the rest:
+
+```python
+# Auto-detect platform, map language, provision session
+triage_and_load_retro_rom(rom_path="/data/game.gba")
+# → platform: "Game Boy Advance (GBA)"
+# → loader:   "GBA ROM Loader"
+# → arch:     "ARM:LE:32:v4t"
+
+# Decompile the main entry point on the same session
+decompile_function(address="0x00001c2c")
+# → decompiled C code for the GBA ROM entry routine
+
+# Search for a known pattern (e.g. 32-bit ARM store-multiple)
+search_bytes(pattern="09 08 00 01")
+# → matching addresses labelled "gba_ram_start"
+```
+
+### Execution Chaining Flow
+
+Instead of forcing your AI agent to spend cycles manually identifying architecture maps, register layouts, or memory segments, chain the automated ingestion pipeline:
+
+1. Invoke `triage_and_load_retro_rom` with a target file path.
+2. The server headlessly parses the binary file structure (`NES\x1a`, `NTR`, `NSO0`, `GBA`, SNES title vectors, `PS-X EXE`, `SEGA`, `TMR SEGA`, `SEGA ENTERPRISES`), binds the matching Ghidra language module (`6502:LE:16`, `ARM:LE:32:v4t`, `AARCH64:LE:64`, `65816:LE:24`, `MIPS:LE:32`, `68000:BE:32`, `Z80:16`, `SuperH4:LE:32`), loads standard address memory blocks, and links automated signature cache arrays.
+3. Use the integrated `emulate_slice` or `emulate_slice_with_taint` tools to analyze localized console loops — no physical console hardware or open GDB networking ports needed.
+
+### Triage Tool
+
+| Tool | Description |
+|---|---|
+| `triage_and_load_retro_rom` | Reads raw file magic bytes to detect NES, SNES, GBA, NDS, Switch, PSX, Genesis, SMS, or Dreamcast ROMs. Provisions a correctly-language-mapped Ghidra session and auto-restores cached function signatures. Returns platform, loader, architecture tag, and mapped memory blocks. |
+
 ## Quick Start
 
 ### Local
@@ -135,6 +183,45 @@ The `Dockerfile` bundles Ghidra 11.2 and JDK 17 in a slim Python 3.11 image. Bin
 
 All run inside the pyhidra process via Ghidra's `EmulatorHelper` — no GDB/LLDB, no network ports, no debugger stubs. Works on ARM, x86, MIPS, and any Ghidra-supported architecture.
 
+#### Worked example — breaking on a register condition
+
+Suppose you're reversing a GBA ROM and want to find the first time `r0` becomes zero inside a loop at `0x08000100`:
+
+```python
+# Step until r0 == 0, stop before the matching instruction
+result = emulate_slice_with_breakpoints(
+    session_id="gba_v1",
+    start_address="0x08000100",
+    max_instructions=5000,
+    stop_condition="R0==0",
+    stop_mode="before"
+)
+# result.exit_reason → "R0==0"
+# result.instructions_executed → 312
+# result.trace → [step 311: r0 goes 4→2, step 312: r0 goes 2→0]
+
+# Check if a specific address was reached after a branch
+result = emulate_slice_with_breakpoints(
+    session_id="gba_v1",
+    start_address="0x08000100",
+    max_instructions=5000,
+    stop_condition="PC==0x08001234"
+)
+# result.exit_reason → "PC==0x08001234"
+
+# Use inequalities to catch bounds checks
+result = emulate_slice_with_breakpoints(
+    session_id="gba_v1",
+    start_address="0x08000100",
+    max_instructions=5000,
+    stop_condition="R1>0xFF"
+)
+# result.exit_reason → "R1>0xFF"
+# result.last_step["r1"] → 0x100
+```
+
+This is especially powerful for identifying copy-loop bounds (`R3 >= R4`), null-pointer paths (`R0==0`), or switch-table targets (`PC==0x`).
+
 ### Function fingerprinting / signature transfer
 
 | Tool | Description |
@@ -165,34 +252,6 @@ s2 = analyze_binary(binary_path="/bin/v2.bin")
 auto_restore_current_binary(session_id=s2.session_id)
 # → 142 functions renamed, zero manual JSON handling
 ```
-
-## Hardware & Retro Ecosystem Integration
-
-`ghidra-retro-mcp` includes native out-of-the-box support for retro-reversing automation pipelines. The server container bundles pre-compiled execution dependencies for:
-
-- **Nintendo Entertainment System (NES)** via `GhidraNes`
-- **Super Nintendo Entertainment System (SNES)** via native 65816 memory maps
-- **Game Boy Advance (GBA)** via `gba-ghidra-loader`
-- **Nintendo DS (NDS)** via `NTRGhidra`
-- **Nintendo Switch** via `ghidra-switch-loader`
-- **PlayStation 1 (PSX)** via `ghidra_psx_ldr`
-- **Sega Genesis / Mega Drive** via native 68000 memory maps
-- **Sega Master System / Game Gear** via `Ghidra-SegaMasterSystem-Loader`
-- **Sega Dreamcast** via native SuperH4 memory maps
-
-### Execution Chaining Flow (Zero-Input Triage)
-
-Instead of forcing your AI agent to spend cycles manually identifying architecture maps, register layouts, or memory segments, chain the automated ingestion pipeline:
-
-1. Invoke `triage_and_load_retro_rom` with a target file path.
-2. The server headlessly parses the binary file structure (`NES\x1a`, `NTR`, `NSO0`, `GBA`, SNES title vectors, `PS-X EXE`, `SEGA`, `TMR SEGA`, `SEGA ENTERPRISES`), binds the matching Ghidra language module (`6502:LE:16`, `ARM:LE:32:v4t`, `AARCH64:LE:64`, `65816:LE:24`, `MIPS:LE:32`, `68000:BE:32`, `Z80:16`, `SuperH4:LE:32`), loads standard address memory blocks, and links automated signature cache arrays.
-3. Use the integrated `emulate_slice` or `emulate_slice_with_taint` tools to analyze localized console loops — no physical console hardware or open GDB networking ports needed.
-
-### Triage Tool
-
-| Tool | Description |
-|---|---|
-| `triage_and_load_retro_rom` | Reads raw file magic bytes to detect NES, SNES, GBA, NDS, Switch, PSX, Genesis, SMS, or Dreamcast ROMs. Provisions a correctly-language-mapped Ghidra session and auto-restores cached function signatures. Returns platform, loader, architecture tag, and mapped memory blocks. |
 
 ## Demo
 
