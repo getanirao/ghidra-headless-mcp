@@ -20,7 +20,7 @@ dependencies = [
     "mcp>=1.0.0",
 ]
 [project.optional-dependencies]
-ghidra = ["pyhidra>=1.0"]
+ghidra = ["pyghidra>=3.0"]
 
 [project.urls]
 Homepage = "https://github.com/getanirao/ghidra-retro-mcp"

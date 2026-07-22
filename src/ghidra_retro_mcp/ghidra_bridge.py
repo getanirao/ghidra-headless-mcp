@@ -3,22 +3,25 @@ import time
 import logging
 import uuid
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+warnings.filterwarnings("ignore", message="open_program.*deprecated")
+
 try:
-    import pyhidra
+    import pyghidra as _pyghidra
 except ImportError:
-    pyhidra = None
+    _pyghidra = None
 
 # Ghidra Java classes — importable only after pyhidra.start() initializes the JVM
 FunctionManager = CodeUnit = ReferenceManager = SourceType = None
 StructureDataType = CategoryPath = ByteDataType = DecompInterface = ConsoleTaskMonitor = None
 _HAS_GHIDRA = False
-_HAS_PYHIDRA = pyhidra is not None
+_HAS_PYGHIDRA = _pyghidra is not None
 
 
 _SIMPLE_TYPES = {
@@ -66,14 +69,15 @@ class GhidraSession:
     def start(self):
         if self._started:
             return
-        if not _HAS_PYHIDRA:
+        if not _HAS_PYGHIDRA:
             raise RuntimeError(
-                "pyhidra not found. Install with: pip install ghidra-retro-mcp[ghidra]"
+                "pyghidra not found. Install with: pip install ghidra-retro-mcp[ghidra]"
             )
+        kwargs = {}
         if self._ghidra_dir:
-            os.environ["GHIDRA_INSTALL_DIR"] = self._ghidra_dir
-        pyhidra.start(verbose=True)
-        logger.info("pyhidra started — importing Ghidra classes")
+            kwargs["install_dir"] = self._ghidra_dir
+        _pyghidra.start(verbose=True, **kwargs)
+        logger.info("pyghidra started — importing Ghidra classes")
         global FunctionManager, CodeUnit, ReferenceManager, SourceType
         global StructureDataType, CategoryPath, ByteDataType, DecompInterface, ConsoleTaskMonitor
         global _HAS_GHIDRA
@@ -122,6 +126,7 @@ class GhidraSession:
                 info.launcher.close()
             except Exception:
                 pass
+            info.launcher = None
         del self._sessions[session_id]
         if self._active_session_id == session_id:
             self._active_session_id = (
@@ -145,18 +150,20 @@ class GhidraSession:
         project_dir = Path(project_dir or binary_path.parent).resolve()
         project_name = f"_{binary_path.stem}_mcp_{int(time.time())}"
 
-        launcher = pyhidra.Launcher(
-            project_dir=str(project_dir),
-            project_name=project_name,
+        gen = _pyghidra.open_program(
             binary_path=str(binary_path),
+            project_location=str(project_dir),
+            project_name=project_name,
+            analyze=True,
         )
-        launcher.open_program()
+        flat_api = next(gen)
+        program = flat_api.program
 
         info = SessionInfo(
             session_id=sid,
-            launcher=launcher,
-            program=launcher.program,
-            flat_api=launcher.flat_api,
+            launcher=gen,
+            program=program,
+            flat_api=flat_api,
             binary_path=str(binary_path),
             project_name=project_name,
             loaded_at=time.time(),
@@ -885,21 +892,23 @@ class GhidraSession:
         project_name = f"_{rom_path.stem}_{short}_{int(time.time())}"
 
         kwargs = dict(
-            project_dir=str(project_dir),
-            project_name=project_name,
             binary_path=str(rom_path),
+            project_location=str(project_dir),
+            project_name=project_name,
+            analyze=True,
         )
         if lang_id != "Auto-Detect":
             kwargs["language"] = lang_id
 
-        launcher = pyhidra.Launcher(**kwargs)
-        launcher.open_program()
+        gen = _pyghidra.open_program(**kwargs)
+        flat_api = next(gen)
+        program = flat_api.program
 
         info = SessionInfo(
             session_id=sid,
-            launcher=launcher,
-            program=launcher.program,
-            flat_api=launcher.flat_api,
+            launcher=gen,
+            program=program,
+            flat_api=flat_api,
             binary_path=str(rom_path),
             project_name=project_name,
             loaded_at=time.time(),
