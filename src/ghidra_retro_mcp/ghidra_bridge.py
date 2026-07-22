@@ -130,7 +130,7 @@ class GhidraSession:
             raise ValueError(f"Session {session_id} not found")
         if info.launcher is not None:
             try:
-                info.launcher.close()
+                info.launcher.__exit__(None, None, None)
             except Exception:
                 pass
             info.launcher = None
@@ -160,13 +160,13 @@ class GhidraSession:
         old_stdout = sys.stdout
         sys.stdout = sys.stderr
         try:
-            gen = _pyghidra.open_program(
+            cm = _pyghidra.open_program(
                 binary_path=str(binary_path),
                 project_location=str(project_dir),
                 project_name=project_name,
                 analyze=True,
             )
-            flat_api = next(gen)
+            flat_api = cm.__enter__()
         finally:
             sys.stdout = old_stdout
         program = flat_api.program
@@ -915,15 +915,15 @@ class GhidraSession:
         old_stdout = sys.stdout
         sys.stdout = sys.stderr
         try:
-            gen = _pyghidra.open_program(**kwargs)
-            flat_api = next(gen)
+            cm = _pyghidra.open_program(**kwargs)
+            flat_api = cm.__enter__()
         finally:
             sys.stdout = old_stdout
         program = flat_api.program
 
         info = SessionInfo(
             session_id=sid,
-            launcher=gen,
+            launcher=cm,
             program=program,
             flat_api=flat_api,
             binary_path=str(rom_path),
