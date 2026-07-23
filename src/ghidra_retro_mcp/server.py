@@ -28,7 +28,6 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "binary_path": {"type": "string", "description": "Path to the binary file"},
-                "project_dir": {"type": "string", "description": "Optional project directory"},
                 "session_id": {"type": "string", "description": "Optional session ID (auto-generated if omitted)"},
             },
             "required": ["binary_path"],
@@ -405,7 +404,6 @@ TOOLS = [
             "properties": {
                 "rom_path": {"type": "string", "description": "Absolute system path to the targeted emulator ROM image or raw memory partition block dump."},
                 "session_id": {"type": "string", "description": "Optional session tracking token for parallel multi-binary session context."},
-                "project_dir": {"type": "string", "description": "Optional custom workspace path target location on the filesystem layer."},
             },
             "required": ["rom_path"],
         },
@@ -451,7 +449,6 @@ def _dispatch(name: str, args: dict):
     if name == "analyze_binary":
         return session.analyze_binary(
             binary_path=args["binary_path"],
-            project_dir=args.get("project_dir"),
             session_id=args.get("session_id"),
         )
     if name == "list_sessions":
@@ -594,7 +591,6 @@ def _dispatch(name: str, args: dict):
         return session.triage_and_load_retro_rom(
             rom_path=args["rom_path"],
             session_id=args.get("session_id"),
-            project_dir=args.get("project_dir"),
         )
 
     raise ValueError(f"Unknown tool: {name}")

@@ -4,6 +4,8 @@ import time
 import logging
 import uuid
 import re
+import shutil
+import tempfile
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,6 +60,7 @@ class SessionInfo:
     flat_api: object = None
     binary_path: str = ""
     project_name: str = ""
+    project_location: str = ""
     loaded_at: float = 0.0
 
 
@@ -140,11 +143,15 @@ class GhidraSession:
             self._active_session_id = (
                 next(iter(self._sessions)) if self._sessions else None
             )
+        if info.project_location and os.path.isdir(info.project_location):
+            try:
+                shutil.rmtree(info.project_location)
+            except Exception:
+                pass
 
     def analyze_binary(
         self,
         binary_path: str,
-        project_dir: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> dict:
         binary_path = Path(binary_path).resolve()
@@ -155,7 +162,7 @@ class GhidraSession:
         if sid in self._sessions:
             self.close_session(sid)
 
-        project_dir = Path(project_dir or binary_path.parent).resolve()
+        project_dir = tempfile.mkdtemp(prefix="ghidra_retro_")
         project_name = f"_{binary_path.stem}_mcp_{int(time.time())}"
 
         old_stdout = sys.stdout
@@ -163,7 +170,7 @@ class GhidraSession:
         try:
             cm = _pyghidra.open_program(
                 binary_path=str(binary_path),
-                project_location=str(project_dir),
+                project_location=project_dir,
                 project_name=project_name,
                 analyze=False,
             )
@@ -179,6 +186,7 @@ class GhidraSession:
             flat_api=flat_api,
             binary_path=str(binary_path),
             project_name=project_name,
+            project_location=project_dir,
             loaded_at=time.time(),
         )
         self._sessions[sid] = info
@@ -882,7 +890,6 @@ class GhidraSession:
         self,
         rom_path: str,
         session_id: Optional[str] = None,
-        project_dir: Optional[str] = None,
     ) -> dict:
         from .tools.retro_triage import detect_retro_platform
 
@@ -896,13 +903,13 @@ class GhidraSession:
         if sid in self._sessions:
             self.close_session(sid)
 
-        project_dir = Path(project_dir or rom_path.parent).resolve()
+        project_dir = tempfile.mkdtemp(prefix="ghidra_retro_")
         short = platform_name.split()[0].lower().replace("/", "_")
         project_name = f"_{rom_path.stem}_{short}_{int(time.time())}"
 
         kwargs = dict(
             binary_path=str(rom_path),
-            project_location=str(project_dir),
+            project_location=project_dir,
             project_name=project_name,
             analyze=False,
         )
@@ -924,6 +931,7 @@ class GhidraSession:
             flat_api=flat_api,
             binary_path=str(rom_path),
             project_name=project_name,
+            project_location=project_dir,
             loaded_at=time.time(),
         )
         self._sessions[sid] = info
