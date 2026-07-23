@@ -8,6 +8,7 @@ import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+import jpype
 
 logger = logging.getLogger(__name__)
 
@@ -1037,11 +1038,12 @@ def _resolve_type(dtm, type_str: str):
 def _get_bytes(program, addr, length):
     try:
         mem = program.getMemory()
-        bb = mem.getBytes(addr, length)
-        ba = bytearray(length)
-        for i in range(length):
-            ba[i] = bb[i] & 0xFF
-        return " ".join(f"{b:02x}" for b in ba)
+        jbuf = jpype.JArray(jpype.JByte, 1)(length)
+        n = mem.getBytes(addr, jbuf)
+        parts = []
+        for i in range(n):
+            parts.append(f"{(jbuf[i] + 256) % 256:02x}")
+        return " ".join(parts)
     except Exception:
         return ""
 
@@ -1049,8 +1051,9 @@ def _get_bytes(program, addr, length):
 def _read_raw_bytes(program, addr, length):
     try:
         mem = program.getMemory()
-        bb = mem.getBytes(addr, length)
-        return [bb[i] & 0xFF for i in range(length)]
+        jbuf = jpype.JArray(jpype.JByte, 1)(length)
+        n = mem.getBytes(addr, jbuf)
+        return [(jbuf[i] + 256) % 256 for i in range(n)]
     except Exception:
         return []
 
