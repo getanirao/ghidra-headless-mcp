@@ -1038,7 +1038,10 @@ def _get_bytes(program, addr, length):
     try:
         mem = program.getMemory()
         bb = mem.getBytes(addr, length)
-        return " ".join(f"{b & 0xFF:02x}" for b in bb)
+        ba = bytearray(length)
+        for i in range(length):
+            ba[i] = bb[i] & 0xFF
+        return " ".join(f"{b:02x}" for b in ba)
     except Exception:
         return ""
 
@@ -1046,7 +1049,8 @@ def _get_bytes(program, addr, length):
 def _read_raw_bytes(program, addr, length):
     try:
         mem = program.getMemory()
-        return list(mem.getBytes(addr, length))
+        bb = mem.getBytes(addr, length)
+        return [bb[i] & 0xFF for i in range(length)]
     except Exception:
         return []
 
